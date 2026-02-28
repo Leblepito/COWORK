@@ -243,6 +243,14 @@ async def list_tasks():
     return db.list_tasks()
 
 
+@app.get("/api/tasks/{task_id}")
+async def get_task(task_id: str):
+    task = db.get_task(task_id)
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "Task not found"})
+    return task
+
+
 @app.post("/api/tasks")
 async def create_task(
     title: str = Form(...),
@@ -254,6 +262,26 @@ async def create_task(
     if auto_loop:
         auto_loop.add_event(assigned_to, f"Yeni görev: {title[:60]}", "task_created")
     return task
+
+
+@app.put("/api/tasks/{task_id}")
+async def update_task(
+    task_id: str,
+    status: str = Form(...),
+    log_message: str = Form(""),
+):
+    """Update a task's status."""
+    task = db.get_task(task_id)
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "Task not found"})
+    valid_statuses = {"pending", "in_progress", "done", "error", "cancelled"}
+    if status not in valid_statuses:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Invalid status. Must be one of: {', '.join(sorted(valid_statuses))}"},
+        )
+    db.update_task_status(task_id, status, log_message)
+    return db.get_task(task_id)
 
 
 # ═══════════════════════════════════════════════════════
