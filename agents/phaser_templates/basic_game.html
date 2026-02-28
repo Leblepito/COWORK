@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phaser Temel Oyun Şablonu</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        
+        h1 {
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            margin-bottom: 20px;
+        }
+        
+        #game-container {
+            position: relative;
+            border: 3px solid #2c3e50;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.3);
+            background: rgba(0,0,0,0.1);
+        }
+        
+        #ui-panel {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            z-index: 1000;
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border-radius: 10px;
+            color: white;
+            font-weight: bold;
+            min-width: 150px;
+        }
+        
+        .ui-item {
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+        
+        .ui-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        #controls-info {
+            position: absolute;
+            bottom: 15px;
+            right: 15px;
+            z-index: 1000;
+            background: rgba(0,0,0,0.8);
+            padding: 10px;
+            border-radius: 8px;
+            color: white;
+            font-size: 12px;
+            max-width: 200px;
+        }
+        
+        canvas {
+            display: block;
+            border-radius: 12px;
+        }
+        
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 2000;
+            background: rgba(255,0,0,0.9);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            display: none;
+        }
+        
+        /* Mobile responsive */
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            h1 { font-size: 24px; }
+            #ui-panel {
+                font-size: 14px;
+                padding: 10px;
+                min-width: 120px;
+            }
+            #controls-info { font-size: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <h1>🎮 Phaser Oyun Şablonu</h1>
+    
+    <div id="game-container">
+        <div id="ui-panel">
+            <div class="ui-item">🏆 Skor: <span id="score">0</span></div>
+            <div class="ui-item">📊 Seviye: <span id="level">1</span></div>
+            <div class="ui-item">❤️ Can: <span id="lives">3</span></div>
+            <div class="ui-item">⏱️ Süre: <span id="timer">0</span></div>
+        </div>
+        
+        <div id="controls-info">
+            <strong>Kontroller:</strong><br>
+            🔼 W/↑ - Zıpla<br>
+            ◀️ A/← - Sol<br>
+            ▶️ D/→ - Sağ<br>
+            🖱️ Mouse - Etkileşim
+        </div>
+        
+        <div id="game-over-panel" class="game-over">
+            <div>🎯 OYUN BİTTİ!</div>
+            <div style="font-size: 16px; margin-top: 10px;">
+                Final Skor: <span id="final-score">0</span>
+            </div>
+            <div style="font-size: 12px; margin-top: 15px; opacity: 0.8;">
+                Yeniden başlamak için R tuşuna bas
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global oyun değişkenleri
+        let gameScore = 0;
+        let gameLevel = 1;
+        let gameLives = 3;
+        let gameTime = 0;
+        let gameRunning = true;
+        
+        // UI güncelleme fonksiyonları
+        function updateUI() {
+            document.getElementById('score').textContent = gameScore;
+            document.getElementById('level').textContent = gameLevel;
+            document.getElementById('lives').textContent = gameLives;
+            document.getElementById('timer').textContent = Math.floor(gameTime);
+        }
+        
+        function showGameOver() {
+            document.getElementById('final-score').textContent = gameScore;
+            document.getElementById('game-over-panel').style.display = 'block';
+            gameRunning = false;
+        }
+        
+        function hideGameOver() {
+            document.getElementById('game-over-panel').style.display = 'none';
+            gameRunning = true;
+        }
+        
+        // Phaser oyun sahnesi
+        class MainGameScene extends Phaser.Scene {
+            constructor() {
+                super({ key: 'MainGame' });
+                this.gameTimer = 0;
+            }
+            
+            preload() {
+                // Basit SVG sprite'lar oluştur
+                this.createSimpleSprites();
+            }
+            
+            create() {
+                // Arka plan
+                this.add.rectangle(400, 300, 800, 600, 0x87ceeb);
+                
+                // Zemin platformları
+                this.platforms = this.physics.add.staticGroup();
+                this.platforms.create(400, 580, 'platform').setScale(800, 40).refreshBody();
+                this.platforms.create(150, 450, 'platform').setScale(300, 20).refreshBody();
+                this.platforms.create(650, 350, 'platform').setScale(300, 20).refreshBody();
+                this.platforms.create(400, 250, 'platform').setScale(200, 20).refreshBody();
+                
+                // Oyuncu
+                this.player = this.physics.add.sprite(100, 450, 'player');
+                this.player.setBounce(0.2);
+                this.player.setCollideWorldBounds(true);
+                this.player.setTint(0x00ff00);
+                
+                // Oyuncu animasyonları
+                this.anims.create({
+                    key: 'left',
+                    frames: [{ key: 'player', frame: 0 }],
+                    frameRate: 10,
+                    repeat: -1
+                });
+                
+                // Düşmanlar
+                this.enemies = this.physics.add.group();
+                this.spawnEnemies();
+                
+                // Toplanabilirler
+                this.collectibles = this.physics.add.group();
+                this.spawnCollectibles();
+                
+                // Kontroller
+                this.cursors = this.input.keyboard.createCursorKeys();
+                this.wasd = this.input.keyboard.addKeys('W,S,A,D,R');
+                
+                // Çarpışmalar
+                this.physics.add.collider(this.player, this.platforms);
+                this.physics.add.collider(this.enemies, this.platforms);
+                this.physics.add.collider(this.collectibles, this.platforms);
+                
+                this.physics.add.overlap(this.player, this.collectibles, this.collectItem, null, this);
+                this.physics.add.overlap(this.player, this.enemies, this.hitEnemy, null, this);
+                
+                // Zamanlayıcılar
+                this.time.addEvent({
+                    delay: 1000,
+                    callback: this.updateGameTimer,
+                    callbackScope: this,
+                    loop: true
+                });
+                
+                this.time.addEvent({
+                    delay: 5000,
+                    callback: this.spawnEnemies,
+                    callbackScope: this,
+                    loop: true
+                });
+            }
+            
+            update() {
+                if (!gameRunning) {
+                    if (this.wasd.R.isDown) {
+                        this.restartGame();
+                    }
+                    return;
+                }
+                
+                // Oyuncu hareketi
+                if (this.cursors.left.isDown || this.wasd.A.isDown) {
+                    this.player.setVelocityX(-200);
+                    this.player.setTint(0xff0000);
+                } else if (this.cursors.right.isDown || this.wasd.D.isDown) {
+                    this.player.setVelocityX(200);
+                    this.player.setTint(0x0000ff);
+                } else {
+                    this.player.setVelocityX(0);
+                    this.player.setTint(0x00ff00);
+                }
+                
+                if ((this.cursors.up.isDown || this.wasd.W.isDown) && this.player.body.touching.down) {
+                    this.player.setVelocityY(-500);
+                }
+            }
+            
+            createSimpleSprites() {
+                // Platform sprite
+                const platformGraphics = this.add.graphics();
+                platformGraphics.fillStyle(0x32cd32);
+                platformGraphics.fillRect(0, 0, 50, 20);
+                platformGraphics.generateTexture('platform', 50, 20);
+                platformGraphics.destroy();
+                
+                // Oyuncu sprite
+                const playerGraphics = this.add.graphics();
+                playerGraphics.fillStyle(0xffffff);
+                playerGraphics.fillCircle(25, 25, 25);
+                playerGraphics.generateTexture('player', 50, 50);
+                playerGraphics.destroy();
+                
+                // Düşman sprite
+                const enemyGraphics = this.add.graphics();
+                enemyGraphics.fillStyle(0xff4500);
+                enemyGraphics.fillRect(0, 0, 40, 40);
+                enemyGraphics.generateTexture('enemy', 40, 40);
+                enemyGraphics.destroy();
+                
+                // Toplanabilir sprite
+                const collectibleGraphics = this.add.graphics();
+                collectibleGraphics.fillStyle(0xffd700);
+                collectibleGraphics.fillCircle(15, 15, 15);
+                collectibleGraphics.generateTexture('collectible', 30, 30);
+                collectibleGraphics.destroy();
+            }
+            
+            spawnEnemies() {
+                if (!gameRunning) return;
+                
+                const positions = [
+                    {x: 200, y: 400},
+                    {x: 600, y: 300},
+                    {x: 400, y: 200}
+                ];
+                
+                const pos = Phaser.Utils.Array.GetRandom(positions);
+                const enemy = this.enemies.create(pos.x, pos.y, 'enemy');
+                enemy.setVelocity(Phaser.Math.Between(-100, 100), 0);
+                enemy.setBounce(1);
+                enemy.setCollideWorldBounds(true);
+            }
+            
+            spawnCollectibles() {
+                for (let i = 0; i < 5; i++) {
+                    const x = Phaser.Math.Between(50, 750);
+                    const y = Phaser.Math.Between(50, 500);
+                    const collectible = this.collectibles.create(x, y, 'collectible');
+                    collectible.setBounce(0.5);
+                    collectible.setCollideWorldBounds(true);
+                }
+            }
+            
+            collectItem(player, collectible) {
+                collectible.destroy();
+                gameScore += 10;
+                
+                // Particle efekti
+                const particles = this.add.particles(collectible.x, collectible.y, 'collectible', {
+                    speed: { min: 50, max: 100 },
+                    scale: { start: 0.3, end: 0 },
+                    lifespan: 300
+                });
+                
+                this.time.delayedCall(300, () => particles.destroy());
+                
+                // Seviye kontrolü
+                if (gameScore % 100 === 0) {
+                    gameLevel++;
+                    this.spawnCollectibles(); // Yeni seviyede daha fazla item
+                }
+                
+                updateUI();
+            }
+            
+            hitEnemy(player, enemy) {
+                enemy.destroy();
+                gameLives--;
+                
+                // Hasar efekti
+                player.setTint(0xff0000);
+                this.time.delayedCall(500, () => player.clearTint());
+                
+                if (gameLives <= 0) {
+                    showGameOver();
+                } else {
+                    updateUI();
+                }
+            }
+            
+            updateGameTimer() {
+                if (gameRunning) {
+                    gameTime++;
+                    updateUI();
+                }
+            }
+            
+            restartGame() {
+                // Oyun değişkenlerini sıfırla
+                gameScore = 0;
+                gameLevel = 1;
+                gameLives = 3;
+                gameTime = 0;
+                
+                hideGameOver();
+                updateUI();
+                this.scene.restart();
+            }
+        }
+        
+        // Oyun konfigürasyonu
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            parent: 'game-container',
+            backgroundColor: 0x87ceeb,
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 600 },
+                    debug: false
+                }
+            },
+            scene: MainGameScene,
+            scale: {
+                mode: Phaser.Scale.FIT,
+                autoCenter: Phaser.Scale.CENTER_BOTH,
+                max: {
+                    width: 800,
+                    height: 600
+                }
+            }
+        };
+        
+        // Oyunu başlat
+        const game = new Phaser.Game(config);
+        
+        // İlk UI güncellemesi
+        updateUI();
+    </script>
+</body>
+</html>

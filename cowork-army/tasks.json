@@ -1,0 +1,62 @@
+[
+  {
+    "id": "task-b7150d3a",
+    "title": "BTC teknik analizi yap",
+    "description": "RSI ve Bollinger incelemesi",
+    "assigned_to": "tech-analyst",
+    "priority": "high",
+    "status": "in_progress",
+    "created_by": "user",
+    "created_at": "2026-02-28T11:48:23Z",
+    "updated_at": "2026-02-28T11:48:48Z",
+    "log": [
+      "[2026-02-28T11:48:23Z] Task created — assigned to tech-analyst",
+      "[2026-02-28T11:48:48Z] Otonom döngü tarafından başlatıldı"
+    ]
+  },
+  {
+    "id": "task-1374b755",
+    "title": "BTC teknik analizi yap",
+    "description": "RSI ve Bollinger band incelemesi gerekli",
+    "assigned_to": "tech-analyst",
+    "priority": "high",
+    "status": "in_progress",
+    "created_by": "commander",
+    "created_at": "2026-02-28T11:48:24Z",
+    "updated_at": "2026-02-28T12:15:00Z",
+    "log": [
+      "[2026-02-28T11:48:24Z] Task created — assigned to tech-analyst",
+      "[2026-02-28T12:15:00Z] Otonom döngü tarafından başlatıldı"
+    ]
+  },
+  {
+    "id": "task-dcd484f7",
+    "title": "Oyun Geliştirmek istiyorum.",
+    "description": "https://ualgotrade.com/education/games/shinobi-temple linkinde uAlgoTrade/games klasöründeki oyunları geliştirmek istiyorum. hem içerik hem de grafik ve oynanış olarak geliştirecek agentı görevlendir.",
+    "assigned_to": "tech-analyst",
+    "priority": "high",
+    "status": "in_progress",
+    "created_by": "commander",
+    "created_at": "2026-02-28T12:57:18Z",
+    "updated_at": "2026-02-28T12:58:06Z",
+    "log": [
+      "[2026-02-28T12:57:18Z] Task created — assigned to tech-analyst",
+      "[2026-02-28T12:58:06Z] Otonom döngü tarafından başlatıldı"
+    ]
+  },
+  {
+    "id": "task-5a5f0489",
+    "title": "Yeni Agent Oluştur.",
+    "description": "web'te oynanabilecek Phaser.js kullarak oyun üretecek agent üret.",
+    "assigned_to": "web-dev",
+    "priority": "critical",
+    "status": "in_progress",
+    "created_by": "commander",
+    "created_at": "2026-02-28T13:00:06Z",
+    "updated_at": "2026-02-28T13:06:36Z",
+    "log": [
+      "[2026-02-28T13:00:06Z] Task created — assigned to web-dev",
+      "[2026-02-28T13:06:36Z] Otonom döngü tarafından başlatıldı"
+    ]
+  }
+]
