@@ -5,22 +5,28 @@
   "scripts": {
     "dev": "next dev --port 3333",
     "build": "next build",
-    "start": "next start --port ${PORT:-3333}"
+    "start": "next start --port ${PORT:-3333}",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
+    "@react-three/drei": "^10.0.0",
+    "@react-three/fiber": "^9.0.0",
     "next": "^15.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "three": "^0.172.0",
-    "@react-three/fiber": "^9.0.0",
-    "@react-three/drei": "^10.0.0"
+    "three": "^0.172.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/three": "^0.172.0",
+    "jsdom": "^28.1.0",
+    "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",
-    "@tailwindcss/postcss": "^4.0.0",
-    "tailwindcss": "^4.0.0"
+    "vitest": "^4.0.18"
   }
 }
