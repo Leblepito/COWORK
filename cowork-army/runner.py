@@ -17,7 +17,10 @@ from typing import Any, Callable, TYPE_CHECKING
 import anthropic
 
 from registry import agent_def_from_db_row
-from tools import TOOL_DEFINITIONS, DELEGATION_TOOLS, ToolExecutor, DelegationExecutor
+from tools import (
+    TOOL_DEFINITIONS, DELEGATION_TOOLS, DEPLOY_TOOLS,
+    ToolExecutor, DelegationExecutor, DeployExecutor,
+)
 
 if TYPE_CHECKING:
     from database import Database
@@ -182,17 +185,27 @@ class AgentRunner:
 
         # Kargocu gets delegation tools in addition to standard tools
         is_kargocu = agent_id == "kargocu"
+        is_deploy_ops = agent_id == "deploy-ops"
         delegation_exec: DelegationExecutor | None = None
+        deploy_exec: DeployExecutor | None = None
+
         if is_kargocu:
             delegation_exec = DelegationExecutor(
                 db=self.db,
                 agent_spawner=self._spawn_for_delegation,
                 event_callback=self.event_callback,
             )
+        if is_deploy_ops:
+            deploy_exec = DeployExecutor(
+                cowork_root=self.cowork_root,
+                event_callback=self.event_callback,
+            )
 
         tools_for_agent = list(TOOL_DEFINITIONS)
         if is_kargocu:
             tools_for_agent.extend(DELEGATION_TOOLS)
+        if is_deploy_ops:
+            tools_for_agent.extend(DEPLOY_TOOLS)
 
         if not self.api_key:
             proc.status = "error"
@@ -252,6 +265,11 @@ class AgentRunner:
                             "list_agents", "delegate_task",
                         ):
                             result = await delegation_exec.execute(tb.name, tb.input)
+                        # Deploy tools handled by DeployExecutor
+                        elif is_deploy_ops and deploy_exec and tb.name in (
+                            "git_operations", "railway_deploy", "check_secrets",
+                        ):
+                            result = await deploy_exec.execute(tb.name, tb.input)
                         else:
                             result = await executor.execute(tb.name, tb.input)
 
