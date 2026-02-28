@@ -1,5 +1,2 @@
 [build]
-buildCommand = "cd cowork-army/frontend && npm ci && npm run build"
-
-[deploy]
-startCommand = "cd cowork-army/frontend && npm run start"
+builder = "nixpacks"
