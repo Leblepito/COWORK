@@ -59,20 +59,24 @@ class CommanderRouter:
     def route(self, text: str) -> tuple[str, str, int]:
         """
         Analyze text and return (agent_id, agent_name, match_count).
-        Falls back to 'web-dev' if no keyword matches.
+        Falls back to 'kargocu' if no keyword matches (intelligent routing).
         """
         patterns = self._build_patterns()
         scores: dict[str, int] = {}
         for agent_id, (_, pats) in patterns.items():
+            # Skip kargocu from keyword matching — it's used as fallback
+            if agent_id == "kargocu":
+                continue
             hits = sum(1 for p in pats if p.search(text))
             if hits > 0:
                 scores[agent_id] = hits
 
         if not scores:
-            web_dev = self.db.get_agent("web-dev")
-            if web_dev:
-                return web_dev["id"], web_dev["name"], 0
-            return "web-dev", "Full-Stack Geliştirici", 0
+            # No keyword match → route to Kargocu for intelligent analysis
+            kargocu = self.db.get_agent("kargocu")
+            if kargocu:
+                return kargocu["id"], kargocu["name"], 0
+            return "kargocu", "Kargocu", 0
 
         best_id = max(scores, key=lambda k: scores[k])
         best_name = patterns[best_id][0]

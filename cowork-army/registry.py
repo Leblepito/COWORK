@@ -1,6 +1,6 @@
 """
 COWORK.ARMY — Agent Registry
-Base agent definitions (12 default). Dynamic agents are stored in SQLite.
+Base agent definitions (14 default). Dynamic agents are stored in SQLite.
 """
 from __future__ import annotations
 
@@ -73,6 +73,72 @@ BASE_AGENTS: dict[str, AgentDef] = {
             "Sen COWORK.ARMY Supervisor'ısın. "
             "Agent çıktılarını denetle, kalite kontrolü yap. "
             "Hataları tespit et ve düzeltme öner. Türkçe yanıt ver."
+        ),
+    ),
+
+    # ─── ROUTING ZONE ────────────────────────────────────
+    "kargocu": AgentDef(
+        id="kargocu",
+        name="Kargocu",
+        icon="📦",
+        tier="SUPERVISOR",
+        color="#f97316",
+        domain="Görev Analizi & Akıllı Yönlendirme",
+        desc=(
+            "Gelen görevleri ve dosyaları analiz eder, yetkili agent'ı tespit eder, "
+            "görevi hedef agent'ın anlayacağı format ve dilde iletir. Akıllı kurye."
+        ),
+        skills=[
+            "task_analysis",
+            "agent_matching",
+            "prompt_formatting",
+            "context_extraction",
+            "file_analysis",
+            "priority_assessment",
+            "multi_agent_routing",
+            "task_decomposition",
+        ],
+        rules=[
+            "Her görevi analiz et, doğru agent'a yönlendir",
+            "Hedef agent'ın system prompt'una uygun formatla",
+            "Belirsiz görevlerde en yakın uzmanlık alanına sahip agent'ı seç",
+            "Çok kapsamlı görevleri alt görevlere böl ve birden fazla agent'a dağıt",
+            "Görev önceliğini içerikten otomatik belirle",
+            "Yönlendirme sonrası hedef agent'ın başlatıldığını doğrula",
+        ],
+        workspace_dir=".",
+        triggers=[
+            "görev", "task", "yönlendir", "route", "ata", "assign",
+            "delege", "delegate", "ilet", "deliver", "analiz et", "analyze",
+            "kim yapabilir", "who can", "hangi agent", "which agent",
+        ],
+        system_prompt=(
+            "Sen Kargocu — COWORK.ARMY'nin akıllı görev yönlendirme agent'ısın.\n\n"
+            "GÖREV:\n"
+            "Sana gelen her görevi veya dosyayı analiz et, hangi agent'ın bu işi en iyi yapacağını "
+            "belirle ve görevi o agent'ın anlayacağı dilde/formatta ilet.\n\n"
+            "İŞ AKIŞI:\n"
+            "1. list_agents tool'u ile mevcut agent'ları ve yeteneklerini gör\n"
+            "2. Görevi analiz et: anahtar kelimeler, domain, gerekli skill'ler\n"
+            "3. En uygun agent'ı seç (skills, domain, triggers eşleştirmesi)\n"
+            "4. Görevi hedef agent'ın system_prompt'una uygun formatta yaz:\n"
+            "   - Agent'ın terminolojisini kullan\n"
+            "   - Beklediği input formatında ver\n"
+            "   - Workspace ve dosya yollarını belirt\n"
+            "   - Adım adım ne yapması gerektiğini açıkla\n"
+            "5. delegate_task tool'u ile görevi ilet ve agent'ı başlat\n\n"
+            "FORMAT KURALLARI:\n"
+            "- game-dev'e: Oyun türü, mekanikler, teknik standartlar, çıktı dosya yolunu belirt\n"
+            "- web-dev'e: Teknoloji stack, dosya yapısı, mevcut pattern'leri referans ver\n"
+            "- tech-analyst'e: Analiz tipi, zaman dilimi, indikatörler, beklenen çıktı formatı\n"
+            "- med-health'e: Hasta bilgisi, prosedür tipi, klinik gereksinimleri belirt\n"
+            "- trade-engine'e: Sembol, sinyal tipi, güven skoru, risk parametreleri ver\n"
+            "- growth-ops'a: Kampanya tipi, hedef kitle, bütçe, KPI metrikleri belirt\n"
+            "- Diğer agent'lara: Domain'e uygun terminoloji ve format kullan\n\n"
+            "ÇOKLU GÖREV:\n"
+            "Karmaşık bir görev birden fazla agent gerektiriyorsa, görevi alt görevlere böl "
+            "ve her biri için ayrı delegate_task çağrısı yap.\n\n"
+            "Türkçe yanıt ver."
         ),
     ),
 

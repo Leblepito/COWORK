@@ -17,14 +17,14 @@ from typing import Any, Callable, TYPE_CHECKING
 import anthropic
 
 from registry import agent_def_from_db_row
-from tools import TOOL_DEFINITIONS, ToolExecutor
+from tools import TOOL_DEFINITIONS, DELEGATION_TOOLS, ToolExecutor, DelegationExecutor
 
 if TYPE_CHECKING:
     from database import Database
 
 logger = logging.getLogger("cowork-army.runner")
 
-MAX_ROUNDS = 10          # max tool-use iterations per spawn
+MAX_ROUNDS = 30          # max tool-use iterations per spawn
 MODEL = "claude-sonnet-4-20250514"
 MAX_TOKENS = 4096
 OUTPUT_BUFFER_SIZE = 500  # lines per agent
@@ -40,7 +40,7 @@ class AgentProcess:
     __slots__ = (
         "agent_id", "status", "output_buffer", "alive",
         "started_at", "task_description", "task_handle",
-        "cancel_event", "pid_counter",
+        "cancel_event", "pid_counter", "task_id",
     )
 
     def __init__(self, agent_id: str) -> None:
@@ -53,6 +53,7 @@ class AgentProcess:
         self.task_handle: asyncio.Task[None] | None = None
         self.cancel_event = asyncio.Event()
         self.pid_counter: int = 0
+        self.task_id: str | None = None
 
 
 class AgentRunner:
@@ -83,7 +84,12 @@ class AgentRunner:
 
     # ── Public API ──────────────────────────────────────
 
-    async def spawn(self, agent_id: str, task: str | None = None) -> dict:
+    async def spawn(
+        self,
+        agent_id: str,
+        task: str | None = None,
+        task_id: str | None = None,
+    ) -> dict:
         """Spawn an agent. Returns AgentStatus dict immediately."""
         agent_row = self.db.get_agent(agent_id)
         if not agent_row:
@@ -99,6 +105,7 @@ class AgentRunner:
         proc.status = "thinking"
         proc.started_at = _now_iso()
         proc.task_description = task or "Workspace'i keşfet ve durum raporu ver."
+        proc.task_id = task_id
         proc.output_buffer.clear()
         proc.cancel_event.clear()
 
@@ -152,6 +159,15 @@ class AgentRunner:
 
     # ── Agent Execution Loop ────────────────────────────
 
+    async def _spawn_for_delegation(
+        self, agent_id: str, task: str, task_id: str | None = None,
+    ) -> str:
+        """Internal spawn used by Kargocu delegation tool."""
+        result = await self.spawn(agent_id, task, task_id)
+        if "error" in result:
+            return f"ERROR: {result['error']}"
+        return f"OK: {agent_id} başlatıldı"
+
     async def _run_agent(self, agent_id: str, proc: AgentProcess) -> None:
         agent_row = self.db.get_agent(agent_id)
         if not agent_row:
@@ -163,6 +179,20 @@ class AgentRunner:
         agent_def = agent_def_from_db_row(agent_row)
         workspace = os.path.join(self.cowork_root, agent_def.workspace_dir)
         executor = ToolExecutor(workspace)
+
+        # Kargocu gets delegation tools in addition to standard tools
+        is_kargocu = agent_id == "kargocu"
+        delegation_exec: DelegationExecutor | None = None
+        if is_kargocu:
+            delegation_exec = DelegationExecutor(
+                db=self.db,
+                agent_spawner=self._spawn_for_delegation,
+                event_callback=self.event_callback,
+            )
+
+        tools_for_agent = list(TOOL_DEFINITIONS)
+        if is_kargocu:
+            tools_for_agent.extend(DELEGATION_TOOLS)
 
         if not self.api_key:
             proc.status = "error"
@@ -176,6 +206,7 @@ class AgentRunner:
             {"role": "user", "content": proc.task_description or "Merhaba"},
         ]
 
+        final_status = "done"
         try:
             for round_num in range(MAX_ROUNDS):
                 if proc.cancel_event.is_set():
@@ -188,7 +219,7 @@ class AgentRunner:
                     model=MODEL,
                     max_tokens=MAX_TOKENS,
                     system=agent_def.system_prompt,
-                    tools=TOOL_DEFINITIONS,
+                    tools=tools_for_agent,
                     messages=messages,
                 )
 
@@ -216,7 +247,14 @@ class AgentRunner:
                         input_summary = json.dumps(tb.input, ensure_ascii=False)[:150]
                         self._log(proc, f"[Tool: {tb.name}] {input_summary}")
 
-                        result = await executor.execute(tb.name, tb.input)
+                        # Delegation tools handled by DelegationExecutor
+                        if is_kargocu and delegation_exec and tb.name in (
+                            "list_agents", "delegate_task",
+                        ):
+                            result = await delegation_exec.execute(tb.name, tb.input)
+                        else:
+                            result = await executor.execute(tb.name, tb.input)
+
                         result_preview = result[:200].replace("\n", " ")
                         self._log(proc, f"  → {result_preview}")
 
@@ -238,10 +276,27 @@ class AgentRunner:
 
                 if response.stop_reason == "end_turn":
                     break
+            else:
+                # MAX_ROUNDS exhausted without natural stop
+                final_status = "needs_continuation"
+                self._log(proc, f"⚠ Maksimum tur sayısına ulaşıldı ({MAX_ROUNDS}), devam gerekiyor")
 
-            proc.status = "done"
-            self._log(proc, "✓ Görev tamamlandı")
-            self.event_callback(agent_id, "Görev tamamlandı", "info")
+            proc.status = final_status
+            if final_status == "done":
+                self._log(proc, "✓ Görev tamamlandı")
+                self.event_callback(agent_id, "Görev tamamlandı", "info")
+            else:
+                self.event_callback(agent_id, "Görev devam edecek — tur limiti aşıldı", "warning")
+
+            # Update linked task status in DB
+            if proc.task_id:
+                if final_status == "done":
+                    self.db.update_task_status(proc.task_id, "done", "Agent görevi tamamladı")
+                elif final_status == "needs_continuation":
+                    self.db.update_task_status(
+                        proc.task_id, "in_progress",
+                        f"Tur limiti ({MAX_ROUNDS}) aşıldı — otonom döngü yeniden başlatacak",
+                    )
 
         except asyncio.CancelledError:
             proc.status = "idle"
@@ -250,11 +305,15 @@ class AgentRunner:
             proc.status = "error"
             self._log(proc, f"API Error: {e}")
             self.event_callback(agent_id, f"API hatası: {str(e)[:80]}", "warning")
+            if proc.task_id:
+                self.db.update_task_status(proc.task_id, "in_progress", f"API hatası — yeniden denenecek: {str(e)[:60]}")
         except Exception as e:
             proc.status = "error"
             self._log(proc, f"Error: {type(e).__name__}: {e}")
             self.event_callback(agent_id, f"Hata: {str(e)[:80]}", "warning")
             logger.exception("Agent %s crashed", agent_id)
+            if proc.task_id:
+                self.db.update_task_status(proc.task_id, "in_progress", f"Hata — yeniden denenecek: {str(e)[:60]}")
         finally:
             proc.alive = False
 

@@ -9,7 +9,7 @@ COWORK/
 ├── cowork-army/                 ← Backend (FastAPI, port 8888)
 │   ├── server.py                → Ana sunucu, tum API route'lari
 │   ├── database.py              → SQLite DB (agents, tasks, events)
-│   ├── registry.py              → 13 base agent tanimi (BASE_AGENTS)
+│   ├── registry.py              → 14 base agent tanimi (BASE_AGENTS)
 │   ├── runner.py                → Agent lifecycle: spawn → run → done/error
 │   ├── autonomous.py            → Otonom dongu (tick-based agent koordinasyonu)
 │   ├── commander.py             → Keyword-based task routing + dinamik agent olusturma
@@ -51,13 +51,14 @@ Telefon/Browser → Frontend (Railway / localhost:3333)
 
 ## Agent Sistemi
 
-### Base Agents (13 sabit)
+### Base Agents (14 sabit)
 Registry'de tanimli, DB'ye seed edilen, silinemez agentlar:
 
 | ID | Rol | Tier |
 |---|---|---|
 | commander | Yonetici | COMMANDER |
 | supervisor | Denetci | SUPERVISOR |
+| kargocu | Akilli Gorev Yonlendirici | SUPERVISOR |
 | med-health | Medikal Saglik | DIRECTOR |
 | travel-agent | Seyahat | DIRECTOR |
 | trade-engine | Trading Orchestrator | DIRECTOR |
@@ -150,4 +151,4 @@ WAL mode, thread-safe writes.
 
 ---
 
-*COWORK.ARMY v5.1 — 13 base + dinamik agent destegi, SQLite persistence, 3D gorsellestime*
+*COWORK.ARMY v5.2 — 14 base + dinamik agent destegi, Kargocu akilli yonlendirme, gorev persistence, SQLite, 3D gorsellestime*

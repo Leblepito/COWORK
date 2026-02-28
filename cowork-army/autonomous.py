@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("cowork-army.autonomous")
 
-TICK_INTERVAL = 30  # seconds
+TICK_INTERVAL = 30       # seconds
+MAX_TASK_RETRIES = 5     # max re-spawn attempts per task
 
 
 def _now_iso() -> str:
@@ -121,15 +122,54 @@ class AutonomousLoop:
                     "task_created",
                 )
                 desc = f"{task['title']}: {task['description']}" if task["description"] else task["title"]
-                await self.runner.spawn(agent_id, desc)
+                await self.runner.spawn(agent_id, desc, task_id=task["id"])
                 self.db.update_task_status(
                     task["id"], "in_progress", "Otonom döngü tarafından başlatıldı",
                 )
 
-        # 3. Supervisor inbox check (every 5th tick)
+        # 3. Re-spawn stalled in_progress tasks (agent stopped but task not done)
+        in_progress = [t for t in self.db.list_tasks() if t["status"] == "in_progress"]
+        for task in in_progress[:3]:
+            agent_id = task["assigned_to"]
+            proc = self.runner.processes.get(agent_id)
+            if not proc or proc.alive:
+                continue  # Agent still running or unknown
+
+            # Count retries from task log
+            retry_count = sum(
+                1 for entry in task.get("log", [])
+                if "yeniden başlatıldı" in entry
+            )
+            if retry_count >= MAX_TASK_RETRIES:
+                if retry_count == MAX_TASK_RETRIES:
+                    self.db.update_task_status(
+                        task["id"], "error",
+                        f"Maksimum yeniden deneme sayısına ulaşıldı ({MAX_TASK_RETRIES})",
+                    )
+                    self.add_event(
+                        agent_id,
+                        f"Görev başarısız — {MAX_TASK_RETRIES} deneme tükendi: {task['title'][:40]}",
+                        "warning",
+                    )
+                continue
+
+            # Re-spawn the agent to continue the task
+            self.add_event(
+                agent_id,
+                f"Görev devam ediyor (deneme {retry_count + 1}/{MAX_TASK_RETRIES}): {task['title'][:50]}",
+                "task_created",
+            )
+            desc = f"{task['title']}: {task['description']}" if task["description"] else task["title"]
+            await self.runner.spawn(agent_id, desc, task_id=task["id"])
+            self.db.update_task_status(
+                task["id"], "in_progress",
+                f"Otonom döngü tarafından yeniden başlatıldı (deneme {retry_count + 1})",
+            )
+
+        # 4. Supervisor inbox check (every 5th tick)
         if self.tick_count % 5 == 0:
             self.add_event("supervisor", "Inbox kontrolü — agent çıktıları inceleniyor", "inbox_check")
 
-        # 4. Quant-lab self-improve (every 10th tick)
+        # 5. Quant-lab self-improve (every 10th tick)
         if self.tick_count % 10 == 0:
             self.add_event("quant-lab", "Performans metrikleri analiz ediliyor", "self_improve")

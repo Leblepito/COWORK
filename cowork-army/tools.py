@@ -1,13 +1,19 @@
 """
 COWORK.ARMY — Claude Tool Definitions + Sandboxed Executor
 Her agent kendi workspace_dir'i içinde dosya okur/yazar/komut çalıştırır.
+Kargocu agent'a özel delegation tool'ları da burada tanımlıdır.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from pathlib import Path
+from typing import Any, Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from database import Database
 
 # ── Tool Definitions (Anthropic tool_use format) ────────
 
@@ -274,3 +280,133 @@ class ToolExecutor:
         if proc.returncode != 0:
             out += f"\n(exit code: {proc.returncode})"
         return out or "(no output)"
+
+
+# ── Delegation Tools (Kargocu agent only) ─────────────────
+
+DELEGATION_TOOLS = [
+    {
+        "name": "list_agents",
+        "description": (
+            "Tüm mevcut agent'ları listele. "
+            "Her agent'ın ID, isim, tier, domain, skills ve system_prompt bilgisi döner. "
+            "Görevi hangi agent'a yönlendireceğine karar vermek için kullan."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "delegate_task",
+        "description": (
+            "Bir görevi belirli bir agent'a formatlanmış şekilde ilet ve agent'ı başlat. "
+            "description alanı hedef agent'ın system prompt'una uygun şekilde formatlanmalı."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Hedef agent ID (ör: game-dev, web-dev, tech-analyst)",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Görev başlığı (kısa, öz)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "Hedef agent'ın anlayacağı formatta detaylı görev açıklaması. "
+                        "Agent'ın system prompt'undaki terminolojiyi ve beklenen formatı kullan."
+                    ),
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Görev önceliği",
+                },
+            },
+            "required": ["agent_id", "title", "description"],
+        },
+    },
+]
+
+
+class DelegationExecutor:
+    """Executes delegation tools for the Kargocu agent."""
+
+    def __init__(
+        self,
+        db: Database,
+        agent_spawner: Callable[..., Any],
+        event_callback: Callable[[str, str, str], None],
+    ) -> None:
+        self.db = db
+        self.agent_spawner = agent_spawner
+        self.event_callback = event_callback
+
+    async def execute(self, tool_name: str, tool_input: dict) -> str:
+        try:
+            if tool_name == "list_agents":
+                return self._list_agents()
+            elif tool_name == "delegate_task":
+                return await self._delegate_task(tool_input)
+            return f"ERROR: Unknown delegation tool '{tool_name}'"
+        except Exception as e:
+            return f"ERROR: {type(e).__name__}: {e}"
+
+    def _list_agents(self) -> str:
+        agents = self.db.get_all_agents()
+        lines: list[str] = []
+        for a in agents:
+            if a["id"] == "kargocu":
+                continue
+            skills = ", ".join(a.get("skills", [])[:10])
+            triggers = ", ".join(a.get("triggers", [])[:10])
+            prompt_preview = (a.get("system_prompt", "") or "")[:200]
+            lines.append(
+                f"━━━ [{a['id']}] {a['name']} ({a['tier']}) ━━━\n"
+                f"  Domain: {a.get('domain', '-')}\n"
+                f"  Skills: {skills}\n"
+                f"  Triggers: {triggers}\n"
+                f"  System Prompt (özet): {prompt_preview}..."
+            )
+        return f"Toplam {len(lines)} agent:\n\n" + "\n\n".join(lines)
+
+    async def _delegate_task(self, inp: dict) -> str:
+        agent_id = inp["agent_id"]
+        title = inp["title"]
+        desc = inp["description"]
+        priority = inp.get("priority", "medium")
+
+        agent = self.db.get_agent(agent_id)
+        if not agent:
+            return f"ERROR: Agent '{agent_id}' bulunamadı. list_agents ile mevcut agent'ları kontrol et."
+
+        task = self.db.create_task(
+            title=title,
+            description=desc,
+            assigned_to=agent_id,
+            priority=priority,
+            created_by="kargocu",
+        )
+
+        spawn_desc = f"{title}: {desc}" if desc else title
+        await self.agent_spawner(agent_id, spawn_desc, task["id"])
+
+        self.event_callback(
+            "kargocu",
+            f"📦 Görev iletildi: '{title[:40]}' → {agent['name']} ({agent_id})",
+            "task_created",
+        )
+
+        return (
+            f"OK: Görev başarıyla iletildi!\n"
+            f"  Task ID: {task['id']}\n"
+            f"  Hedef: {agent['name']} ({agent_id})\n"
+            f"  Başlık: {title}\n"
+            f"  Öncelik: {priority}\n"
+            f"  Agent başlatıldı ve çalışıyor."
+        )
