@@ -65,8 +65,8 @@ async def lifespan(app: FastAPI):
     )
     auto_loop = AutonomousLoop(runner=runner, db=db)
 
-    logger.info("COWORK.ARMY started — %d agents, root=%s, db=%s",
-                len(db.get_all_agents()), COWORK_ROOT, DB_PATH)
+    agent_count = len(db.get_all_agents())
+    logger.info("✅ %d agents ready (root=%s)", agent_count, COWORK_ROOT)
     if not API_KEY:
         logger.warning("ANTHROPIC_API_KEY not set — agents will not be able to run")
     yield
