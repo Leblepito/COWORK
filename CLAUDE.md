@@ -9,7 +9,7 @@ COWORK/
 ├── cowork-army/                 ← Backend (FastAPI, port 8888)
 │   ├── server.py                → Ana sunucu, tum API route'lari
 │   ├── database.py              → SQLite DB (agents, tasks, events)
-│   ├── registry.py              → 12 base agent tanimi (BASE_AGENTS)
+│   ├── registry.py              → 15 base agent tanimi (BASE_AGENTS)
 │   ├── runner.py                → Agent lifecycle: spawn → run → done/error
 │   ├── autonomous.py            → Otonom dongu (tick-based agent koordinasyonu)
 │   ├── commander.py             → Keyword-based task routing + dinamik agent olusturma
@@ -51,20 +51,23 @@ Telefon/Browser → Frontend (Railway / localhost:3333)
 
 ## Agent Sistemi
 
-### Base Agents (12 sabit)
+### Base Agents (15 sabit)
 Registry'de tanimli, DB'ye seed edilen, silinemez agentlar:
 
 | ID | Rol | Tier |
 |---|---|---|
 | commander | Yonetici | COMMANDER |
 | supervisor | Denetci | SUPERVISOR |
+| kargocu | Akilli Gorev Yonlendirici | SUPERVISOR |
 | med-health | Medikal Saglik | DIRECTOR |
-| travel-agent | Seyahat | WORKER |
+| travel-agent | Seyahat | DIRECTOR |
 | trade-engine | Trading Orchestrator | DIRECTOR |
 | alpha-scout | Sentiment Hunter | WORKER |
 | tech-analyst | Teknik Analiz | WORKER |
 | risk-sentinel | Risk Guardian | WORKER |
 | quant-lab | Nightly Optimizer | WORKER |
+| game-dev | Game BuDev (Phaser.js) | WORKER |
+| deploy-ops | CI/CD & Deploy (GitHub+Railway) | WORKER |
 | growth-ops | Buyume & Pazarlama | WORKER |
 | web-dev | Full-Stack Dev | WORKER |
 | finance | Finans & Muhasebe | WORKER |
@@ -149,4 +152,4 @@ WAL mode, thread-safe writes.
 
 ---
 
-*COWORK.ARMY v5.0 — 12 base + dinamik agent destegi, SQLite persistence, 3D gorsellestime*
+*COWORK.ARMY v5.3 — 15 base + dinamik agent destegi, Kargocu akilli yonlendirme, Deploy Ops CI/CD, gorev persistence, SQLite, 3D gorsellestime*

@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
     logger.info("COWORK.ARMY shutdown")
 
 
-app = FastAPI(title="COWORK.ARMY", version="5.0.0", lifespan=lifespan)
+app = FastAPI(title="COWORK.ARMY", version="5.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -198,11 +198,15 @@ async def delete_agent(agent_id: str):
 
 
 @app.post("/api/agents/{agent_id}/spawn")
-async def spawn_agent(agent_id: str, task: str = Query(None)):
+async def spawn_agent(
+    agent_id: str,
+    task: str = Query(None),
+    task_id: str = Query(None),
+):
     if not db.get_agent(agent_id):
         return JSONResponse(status_code=404, content={"error": "Agent not found"})
     assert runner is not None
-    result = await runner.spawn(agent_id, task)
+    result = await runner.spawn(agent_id, task, task_id=task_id)
     if auto_loop:
         msg = f"Başlatıldı{' — görev: ' + task[:60] if task else ''}"
         auto_loop.add_event(agent_id, msg, "info")
@@ -332,16 +336,6 @@ async def commander_delegate(
     text = f"{title} {description}".strip()
     agent_id, agent_name, match_count = commander_router.route(text)
 
-    # If no match, optionally create a dynamic agent
-    created_agent = None
-    if match_count == 0:
-        created_agent = commander_router.auto_create_agent(text)
-        if created_agent:
-            agent_id = created_agent["id"]
-            agent_name = created_agent["name"]
-            if runner:
-                runner.ensure_process(agent_id)
-
     task = db.create_task(
         title=title,
         description=description,
@@ -353,16 +347,26 @@ async def commander_delegate(
     spawned = False
     spawn_result = None
     if auto_spawn.lower() == "true" and runner:
-        proc = runner.processes.get(agent_id)
-        if proc and not proc.alive:
-            desc = f"{title}: {description}" if description else title
-            spawn_result = await runner.spawn(agent_id, desc)
+        proc = runner.ensure_process(agent_id)
+        if not proc.alive:
+            # Kargocu gets the raw task — it will analyze and re-route
+            if agent_id == "kargocu":
+                desc = (
+                    f"Aşağıdaki görevi analiz et ve doğru agent'a formatlanmış şekilde ilet:\n\n"
+                    f"Başlık: {title}\n"
+                    f"Açıklama: {description}\n"
+                    f"Öncelik: {priority}"
+                )
+            else:
+                desc = f"{title}: {description}" if description else title
+            spawn_result = await runner.spawn(agent_id, desc, task_id=task["id"])
             spawned = True
 
     if auto_loop:
-        msg = f"Görev delegasyonu: '{title[:40]}' → {agent_name} ({agent_id})"
-        if created_agent:
-            msg += " [YENİ AGENT]"
+        if agent_id == "kargocu":
+            msg = f"📦 Kargocu'ya yönlendirildi: '{title[:40]}' — akıllı routing"
+        else:
+            msg = f"Görev delegasyonu: '{title[:40]}' → {agent_name} ({agent_id})"
         auto_loop.add_event("commander", msg, "task_created")
 
     return {
@@ -371,7 +375,7 @@ async def commander_delegate(
         "agent_name": agent_name,
         "spawned": spawned,
         "spawn_result": spawn_result,
-        "agent_created": created_agent is not None,
+        "routed_via_kargocu": agent_id == "kargocu",
     }
 
 
@@ -430,7 +434,7 @@ async def server_info():
     total_agents = len(db.get_all_agents()) if db.conn else 0
     return {
         "name": "COWORK.ARMY",
-        "version": "5.0.0",
+        "version": "5.2.0",
         "mode": "local",
         "agents": total_agents,
         "bridge_connected": True,
