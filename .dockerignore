@@ -1,0 +1,14 @@
+node_modules/
+.next/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.db
+.env
+.env.local
+.DS_Store
+.git/
+.claude/
+Aktif Projeler/
+*.md
