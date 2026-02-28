@@ -19,4 +19,4 @@ done
 # Start frontend (Next.js) in foreground
 # Railway injects PORT env var — frontend uses it
 cd /app/cowork-army/frontend
-exec ./node_modules/.bin/next start --port ${PORT:-3333}
+exec ./node_modules/.bin/next start --hostname 0.0.0.0 --port ${PORT:-3333}
