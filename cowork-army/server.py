@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
     logger.info("COWORK.ARMY shutdown")
 
 
-app = FastAPI(title="COWORK.ARMY", version="5.2.0", lifespan=lifespan)
+app = FastAPI(title="COWORK.ARMY", version="5.3.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -434,7 +434,7 @@ async def server_info():
     total_agents = len(db.get_all_agents()) if db.conn else 0
     return {
         "name": "COWORK.ARMY",
-        "version": "5.2.0",
+        "version": "5.3.0",
         "mode": "local",
         "agents": total_agents,
         "bridge_connected": True,
