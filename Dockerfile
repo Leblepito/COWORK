@@ -4,6 +4,7 @@ WORKDIR /app/cowork-army/frontend
 COPY cowork-army/frontend/package.json cowork-army/frontend/package-lock.json ./
 RUN npm ci
 COPY cowork-army/frontend/ ./
+ENV NEXT_TURBOPACK=0
 RUN npm run build
 
 # Stage 2: Production image

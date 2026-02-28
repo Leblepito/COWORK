@@ -147,12 +147,24 @@ export default function CoworkArmyPage() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-screen">
+            <div className="flex items-center justify-center h-screen bg-[#0a0a1a]">
                 <div className="flex flex-col items-center gap-3">
                     <div className="w-8 h-8 border-3 border-purple-500 border-t-transparent rounded-full animate-spin" />
                     <p className="text-sm text-slate-500">COWORK.ARMY yükleniyor...</p>
                 </div>
             </div>
+        );
+    }
+
+    // Full-screen API Key setup when no key is configured
+    if (apiKeyStatus && !apiKeyStatus.has_key) {
+        return (
+            <ApiKeySetupScreen
+                onSaved={(masked) => {
+                    setApiKeyStatus({ has_key: true, masked });
+                    showToast("API Key kaydedildi! Sistem hazir.", "success");
+                }}
+            />
         );
     }
 
@@ -1173,6 +1185,138 @@ function CreateAgentModal({
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    );
+}
+
+// ──────────────────────────────────────────────────
+// Full-Screen API Key Setup
+// ──────────────────────────────────────────────────
+
+function ApiKeySetupScreen({ onSaved }: { onSaved: (masked: string) => void }) {
+    const { showToast } = useToast();
+    const [key, setKey] = useState("");
+    const [submitting, setSubmitting] = useState(false);
+    const [showKey, setShowKey] = useState(false);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const trimmed = key.trim();
+        if (!trimmed) return;
+        if (!trimmed.startsWith("sk-ant-")) {
+            showToast("Gecersiz format. Key 'sk-ant-' ile baslamali.", "error");
+            return;
+        }
+        setSubmitting(true);
+        try {
+            const result = await saveApiKey(trimmed);
+            onSaved(result.masked);
+        } catch (err) {
+            showToast(err instanceof Error ? err.message : "API key kaydedilemedi", "error");
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-[#0a0a1a] flex items-center justify-center p-4">
+            <div className="w-full max-w-lg">
+                {/* Logo / Header */}
+                <div className="text-center mb-8">
+                    <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-600 to-amber-500 mb-4">
+                        <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+                        </svg>
+                    </div>
+                    <h1 className="text-2xl font-bold text-white mb-2">COWORK.ARMY</h1>
+                    <p className="text-sm text-slate-400">
+                        AI Agent ordunuzu baslatmak icin Anthropic API Key gerekli.
+                    </p>
+                </div>
+
+                {/* Card */}
+                <div className="bg-slate-900 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden">
+                    {/* Steps indicator */}
+                    <div className="px-6 py-4 bg-slate-800/50 border-b border-slate-700">
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2">
+                                <span className="w-6 h-6 rounded-full bg-amber-500 text-black text-xs font-bold flex items-center justify-center">1</span>
+                                <span className="text-xs font-medium text-white">API Key</span>
+                            </div>
+                            <div className="flex-1 h-px bg-slate-700" />
+                            <div className="flex items-center gap-2">
+                                <span className="w-6 h-6 rounded-full bg-slate-700 text-slate-400 text-xs font-bold flex items-center justify-center">2</span>
+                                <span className="text-xs text-slate-500">Hazir</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <form onSubmit={handleSubmit} className="px-6 py-6 space-y-5">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-300 mb-2">
+                                Anthropic API Key
+                            </label>
+                            <div className="relative">
+                                <input
+                                    type={showKey ? "text" : "password"}
+                                    value={key}
+                                    onChange={(e) => setKey(e.target.value)}
+                                    className="w-full px-4 py-3 pr-12 rounded-xl bg-slate-800 border border-slate-600 text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500 transition-colors"
+                                    placeholder="sk-ant-api03-..."
+                                    autoComplete="off"
+                                    autoFocus
+                                    required
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowKey(!showKey)}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300 transition-colors"
+                                >
+                                    {showKey ? (
+                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
+                                    ) : (
+                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                    )}
+                                </button>
+                            </div>
+                            <p className="text-[11px] text-slate-500 mt-2">
+                                console.anthropic.com adresinden API key olusturabilirsiniz.
+                            </p>
+                        </div>
+
+                        {/* Info box */}
+                        <div className="px-4 py-3 rounded-xl bg-purple-500/10 border border-purple-500/20">
+                            <div className="flex gap-3">
+                                <svg className="w-5 h-5 text-purple-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                <div className="text-xs text-purple-300/80 space-y-1">
+                                    <p>Key sunucu tarafinda <strong>.env</strong> dosyasina kaydedilir.</p>
+                                    <p>15 AI agent bu key ile Claude API&apos;yi kullanarak gorevleri yerine getirir.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={submitting || !key.trim()}
+                            className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black text-sm font-bold hover:from-amber-400 hover:to-orange-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                        >
+                            {submitting ? (
+                                <span className="flex items-center justify-center gap-2">
+                                    <span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                                    Kaydediliyor...
+                                </span>
+                            ) : (
+                                "Baslat"
+                            )}
+                        </button>
+                    </form>
+                </div>
+
+                {/* Footer */}
+                <p className="text-center text-[10px] text-slate-600 mt-6">
+                    COWORK.ARMY v5.3 — 15 base + dinamik agent destegi
+                </p>
             </div>
         </div>
     );
