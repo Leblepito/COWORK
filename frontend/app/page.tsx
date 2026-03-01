@@ -112,15 +112,13 @@ export default function Home() {
             </div>
           )}
           <div className="bg-[#0c0d18] border border-[#1a1f35] rounded-xl p-4 text-left mb-6">
-            <div className="text-xs text-gray-500 mb-2 font-medium">API Endpoint:</div>
-            <div className="text-xs text-gray-300 font-code break-all mb-3">
-              {process.env.NEXT_PUBLIC_COWORK_API_URL || "/cowork-api (fallback)"}
-            </div>
+            <div className="text-xs text-gray-500 mb-2 font-medium">API Proxy:</div>
+            <div className="text-xs text-gray-300 font-code break-all mb-3">/cowork-api → backend</div>
             <div className="text-xs text-gray-500 mb-2 font-medium">Kontrol adimlar:</div>
             <div className="space-y-2 text-xs font-code">
               <div className="flex items-start gap-2">
                 <span className="text-amber-400 flex-shrink-0">1.</span>
-                <span className="text-gray-300">Backend servisinin calistigini dogrulayin</span>
+                <span className="text-gray-300">Railway backend servisinin calistigini dogrulayin</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-amber-400 flex-shrink-0">2.</span>
