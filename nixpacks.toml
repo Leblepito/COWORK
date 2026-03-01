@@ -1,7 +1,9 @@
+# Nixpacks fallback config (used if railway.toml builder != dockerfile)
+# Primary deployment uses Dockerfile via railway.toml
 providers = ["node"]
 
 [phases.install]
-cmds = ["cd cowork-army/frontend && npm ci"]
+cmds = ["cd cowork-army/frontend && npm install --legacy-peer-deps"]
 
 [phases.build]
 cmds = ["cd cowork-army/frontend && npm run build"]

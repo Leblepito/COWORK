@@ -1,9 +1,12 @@
+# COWORK.ARMY v7.0 — Frontend Service (Railway)
+# Root Dockerfile builds frontend/ as Next.js standalone
+
 [build]
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
 healthcheckPath = "/"
-healthcheckTimeout = 120
+healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 3
+restartPolicyMaxRetries = 5

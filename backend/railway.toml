@@ -1,0 +1,12 @@
+# COWORK.ARMY v7.0 — Backend Service (Railway)
+# Deploy backend/ as separate Railway service
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/info"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
