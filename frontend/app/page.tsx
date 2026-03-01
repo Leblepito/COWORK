@@ -31,6 +31,7 @@ export default function Home() {
   const [autoStatus, setAutoStatus] = useState<AutonomousStatus | null>(null);
   const [info, setInfo] = useState<ServerInfo | null>(null);
   const [connected, setConnected] = useState<boolean | null>(null); // null = loading
+  const [connError, setConnError] = useState<string>("");
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showCargoModal, setShowCargoModal] = useState(false);
 
@@ -43,8 +44,10 @@ export default function Home() {
       setDepartments(dep); setAgents(ag); setStatuses(st);
       setEvents(ev); setAutoStatus(au); setInfo(inf);
       setConnected(true);
-    } catch {
+      setConnError("");
+    } catch (err) {
       setConnected(false);
+      setConnError(err instanceof Error ? err.message : String(err));
     }
   }, []);
 
@@ -99,23 +102,33 @@ export default function Home() {
             ⚡
           </div>
           <h1 className="text-lg font-bold text-white mb-2">Backend Baglantisi Kurulamadi</h1>
-          <p className="text-sm text-gray-400 mb-6 leading-relaxed">
-            COWORK.ARMY backend sunucusuna baglanilamiyor. Sunucunun calistigini kontrol edin.
+          <p className="text-sm text-gray-400 mb-4 leading-relaxed">
+            COWORK.ARMY backend sunucusuna baglanilamiyor.
           </p>
+          {connError && (
+            <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-3 mb-4 text-left">
+              <div className="text-[10px] text-red-400/60 mb-1">Hata:</div>
+              <div className="text-xs text-red-300 font-code break-all">{connError}</div>
+            </div>
+          )}
           <div className="bg-[#0c0d18] border border-[#1a1f35] rounded-xl p-4 text-left mb-6">
+            <div className="text-xs text-gray-500 mb-2 font-medium">API Endpoint:</div>
+            <div className="text-xs text-gray-300 font-code break-all mb-3">
+              {process.env.NEXT_PUBLIC_COWORK_API_URL || "/cowork-api (fallback)"}
+            </div>
             <div className="text-xs text-gray-500 mb-2 font-medium">Kontrol adimlar:</div>
             <div className="space-y-2 text-xs font-code">
               <div className="flex items-start gap-2">
                 <span className="text-amber-400 flex-shrink-0">1.</span>
-                <span className="text-gray-300">cd backend && python -m uvicorn main:app</span>
+                <span className="text-gray-300">Backend servisinin calistigini dogrulayin</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-amber-400 flex-shrink-0">2.</span>
-                <span className="text-gray-300">docker compose up -d</span>
+                <span className="text-gray-300">NEXT_PUBLIC_COWORK_API_URL env var kontrolu</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-amber-400 flex-shrink-0">3.</span>
-                <span className="text-gray-300">curl localhost:8888/api/info</span>
+                <span className="text-gray-300">Browser Console (F12) ile hata detayini gorun</span>
               </div>
             </div>
           </div>
