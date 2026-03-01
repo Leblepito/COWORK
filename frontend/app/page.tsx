@@ -1,7 +1,7 @@
 "use client";
 /**
  * COWORK.ARMY v7.0 — Main Dashboard
- * 4-department grid + Cargo agent + Event feed
+ * Modern command center with 4 departments, cargo agent, event feed
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
@@ -16,11 +16,11 @@ import {
   delegateCargo, createCoworkTask, spawnAgent,
 } from "@/lib/cowork-api";
 
-const DEPT_COLORS: Record<string, string> = {
-  trade: "#a78bfa", medical: "#22d3ee", hotel: "#f59e0b", software: "#22c55e",
-};
-const DEPT_ICONS: Record<string, string> = {
-  trade: "📈", medical: "🏥", hotel: "🏨", software: "💻",
+const DEPT_META: Record<string, { color: string; icon: string; gradient: string }> = {
+  trade:    { color: "#a78bfa", icon: "📈", gradient: "from-violet-500/10 to-purple-600/5" },
+  medical:  { color: "#22d3ee", icon: "🏥", gradient: "from-cyan-500/10 to-teal-600/5" },
+  hotel:    { color: "#f59e0b", icon: "🏨", gradient: "from-amber-500/10 to-orange-600/5" },
+  software: { color: "#22c55e", icon: "💻", gradient: "from-green-500/10 to-emerald-600/5" },
 };
 
 export default function Home() {
@@ -30,7 +30,7 @@ export default function Home() {
   const [events, setEvents] = useState<AutonomousEvent[]>([]);
   const [autoStatus, setAutoStatus] = useState<AutonomousStatus | null>(null);
   const [info, setInfo] = useState<ServerInfo | null>(null);
-  const [error, setError] = useState("");
+  const [connected, setConnected] = useState<boolean | null>(null); // null = loading
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showCargoModal, setShowCargoModal] = useState(false);
 
@@ -42,9 +42,9 @@ export default function Home() {
       ]);
       setDepartments(dep); setAgents(ag); setStatuses(st);
       setEvents(ev); setAutoStatus(au); setInfo(inf);
-      setError("");
+      setConnected(true);
     } catch {
-      setError("Backend baglanti hatasi");
+      setConnected(false);
     }
   }, []);
 
@@ -55,8 +55,11 @@ export default function Home() {
         const [st, ev, au] = await Promise.all([
           getAgentStatuses(), getAutonomousEvents(30), getAutonomousStatus(),
         ]);
-        setStatuses(st); setEvents(ev); setAutoStatus(au); setError("");
-      } catch {}
+        setStatuses(st); setEvents(ev); setAutoStatus(au);
+        setConnected(true);
+      } catch {
+        setConnected(false);
+      }
     }, 2000);
     return () => clearInterval(iv);
   }, []);
@@ -72,82 +75,155 @@ export default function Home() {
       return s && ["working", "thinking", "coding", "searching"].includes(s);
     }).length;
 
+  // Loading state
+  if (connected === null) {
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-2xl mx-auto mb-4 animate-pulse">
+            👑
+          </div>
+          <div className="text-sm font-bold tracking-widest text-gradient mb-1">COWORK.ARMY</div>
+          <div className="text-xs text-gray-500">Baglaniyor...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // Connection error state
+  if (connected === false && departments.length === 0) {
+    return (
+      <div className="h-screen flex items-center justify-center noise-bg">
+        <div className="text-center max-w-md mx-auto px-6">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-red-500/20 to-red-600/10 border border-red-500/20 flex items-center justify-center text-3xl mx-auto mb-6">
+            ⚡
+          </div>
+          <h1 className="text-lg font-bold text-white mb-2">Backend Baglantisi Kurulamadi</h1>
+          <p className="text-sm text-gray-400 mb-6 leading-relaxed">
+            COWORK.ARMY backend sunucusuna baglanilamiyor. Sunucunun calistigini kontrol edin.
+          </p>
+          <div className="bg-[#0c0d18] border border-[#1a1f35] rounded-xl p-4 text-left mb-6">
+            <div className="text-xs text-gray-500 mb-2 font-medium">Kontrol adimlar:</div>
+            <div className="space-y-2 text-xs font-code">
+              <div className="flex items-start gap-2">
+                <span className="text-amber-400 flex-shrink-0">1.</span>
+                <span className="text-gray-300">cd backend && python -m uvicorn main:app</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-amber-400 flex-shrink-0">2.</span>
+                <span className="text-gray-300">docker compose up -d</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-amber-400 flex-shrink-0">3.</span>
+                <span className="text-gray-300">curl localhost:8888/api/info</span>
+              </div>
+            </div>
+          </div>
+          <button onClick={fetchAll}
+            className="px-6 py-2.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 text-sm font-semibold hover:bg-amber-500/20 transition-colors">
+            Tekrar Dene
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="h-screen flex flex-col overflow-hidden noise-bg">
       {/* HEADER */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-[#1a1f30] flex-shrink-0">
+      <header className="flex items-center justify-between px-5 py-3 border-b border-[#1a1f35] flex-shrink-0 bg-[#0c0d18]/50 backdrop-blur-sm">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-sm">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-lg shadow-lg shadow-amber-500/10">
             👑
           </div>
           <div>
-            <h1 className="text-xs font-extrabold tracking-[3px]">
-              COWORK<span className="text-amber-400">.ARMY</span>
+            <h1 className="text-sm font-extrabold tracking-[3px]">
+              COWORK<span className="text-gradient">.ARMY</span>
             </h1>
-            <p className="text-[8px] text-gray-500 tracking-wider">
-              v7 — {info?.departments ?? 4} DEPTS — {info?.agents ?? 13} AGENTS — POSTGRESQL
+            <p className="text-[10px] text-gray-500">
+              v{info?.version ?? "7.0"} — {info?.departments ?? 4} Dept — {info?.agents ?? 13} Agents
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-4 text-center">
-          <Stat value={departments.length} label="DEPTS" color="#fbbf24" />
-          <Stat value={agents.length} label="AGENTS" />
-          <Stat value={liveCount} label="LIVE" color="#22c55e" />
-          <Stat value={autoStatus?.tick_count ?? 0} label="TICKS" color="#818cf8" />
-          {error && <span className="text-[8px] text-red-400 max-w-[200px] truncate">{error}</span>}
+        <div className="flex items-center gap-5">
+          <StatBadge value={departments.length} label="DEPTS" color="#fbbf24" />
+          <StatBadge value={agents.length} label="AGENTS" />
+          <StatBadge value={liveCount} label="LIVE" color="#22c55e" pulse={liveCount > 0} />
+          <StatBadge value={autoStatus?.tick_count ?? 0} label="TICKS" color="#818cf8" />
+          {connected === false && (
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-500/10 border border-red-500/20">
+              <div className="w-1.5 h-1.5 rounded-full bg-red-500 pulse-dot" />
+              <span className="text-[10px] text-red-400 font-medium">Baglanti kesildi</span>
+            </div>
+          )}
+          {connected === true && (
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              <span className="text-[10px] text-green-400/60">Online</span>
+            </div>
+          )}
         </div>
       </header>
 
       {/* MAIN CONTENT */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto p-5">
         {/* DEPARTMENT GRID */}
-        <div className="grid grid-cols-2 gap-3 mb-4 max-w-5xl mx-auto">
+        <div className="grid grid-cols-2 gap-4 mb-5 max-w-5xl mx-auto">
           {["trade", "medical", "hotel", "software"].map(deptId => {
             const dept = departments.find(d => d.id === deptId);
             const deptAgents = agentsByDept(deptId);
             const live = liveInDept(deptId);
-            const color = DEPT_COLORS[deptId];
-            const icon = DEPT_ICONS[deptId];
+            const meta = DEPT_META[deptId];
 
             return (
               <Link key={deptId} href={`/departments/${deptId}`}
-                className="group block border rounded-xl p-4 transition-all hover:scale-[1.01]"
-                style={{ borderColor: `${color}30`, background: `${color}05` }}>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xl">{icon}</span>
+                className={`group block border rounded-2xl p-5 card-hover bg-gradient-to-br ${meta.gradient}`}
+                style={{ borderColor: `${meta.color}20` }}>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
+                    style={{ background: `${meta.color}15` }}>
+                    {meta.icon}
+                  </div>
                   <div className="flex-1">
-                    <div className="text-[11px] font-extrabold tracking-wider" style={{ color }}>
+                    <div className="text-xs font-bold tracking-wider" style={{ color: meta.color }}>
                       {dept?.name || deptId.toUpperCase()}
                     </div>
-                    <div className="text-[8px] text-gray-500">
+                    <div className="text-[10px] text-gray-500 mt-0.5">
                       {dept?.description || ""}
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-[10px] font-bold" style={{ color }}>{live}</div>
-                    <div className="text-[6px] text-gray-500">LIVE</div>
+                    <div className="text-lg font-extrabold font-code" style={{ color: live > 0 ? "#22c55e" : `${meta.color}60` }}>
+                      {live}
+                    </div>
+                    <div className="text-[8px] text-gray-500 tracking-widest">LIVE</div>
                   </div>
                 </div>
                 {/* Agent chips */}
-                <div className="flex flex-wrap gap-1 mb-2">
+                <div className="flex flex-wrap gap-1.5 mb-3">
                   {deptAgents.map(a => {
                     const st = statuses[a.id]?.status || "idle";
                     const isActive = ["working", "thinking", "coding", "searching"].includes(st);
                     return (
-                      <span key={a.id} className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded-full border"
+                      <span key={a.id}
+                        className={`inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg border transition-all ${
+                          isActive ? "glow-active" : ""
+                        }`}
                         style={{
-                          borderColor: isActive ? "#22c55e50" : `${color}25`,
-                          background: isActive ? "#22c55e10" : `${color}08`,
+                          borderColor: isActive ? "#22c55e40" : `${meta.color}15`,
+                          background: isActive ? "#22c55e08" : `${meta.color}06`,
                           color: isActive ? "#22c55e" : "#94a3b8",
                         }}>
-                        <span className={`w-1 h-1 rounded-full ${isActive ? "bg-green-500 pulse-dot" : "bg-gray-600"}`} />
+                        <span className={`w-1.5 h-1.5 rounded-full ${isActive ? "bg-green-500 pulse-dot" : "bg-gray-600"}`} />
                         {a.icon} {a.name}
                       </span>
                     );
                   })}
                 </div>
-                <div className="text-[7px] text-gray-500 group-hover:text-gray-300 transition-colors flex items-center gap-1">
-                  3D Sahne → <span style={{ color }}>Goruntule</span>
+                <div className="text-[10px] text-gray-500 group-hover:text-gray-300 transition-colors flex items-center gap-1.5">
+                  <span>3D Sahne</span>
+                  <span className="opacity-40">→</span>
+                  <span style={{ color: meta.color }} className="font-medium">Goruntule</span>
                 </div>
               </Link>
             );
@@ -155,63 +231,66 @@ export default function Home() {
         </div>
 
         {/* CARGO + EVENTS ROW */}
-        <div className="grid grid-cols-3 gap-3 max-w-5xl mx-auto">
+        <div className="grid grid-cols-3 gap-4 max-w-5xl mx-auto">
           {/* CARGO SECTION */}
-          <div className="col-span-2 border border-[#f472b630] rounded-xl p-4 bg-[#f472b605]">
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-xl">📦</span>
-              <div className="flex-1">
-                <div className="text-[11px] font-extrabold text-pink-400 tracking-wider">CARGO AGENT</div>
-                <div className="text-[8px] text-gray-500">Dosya analiz & departman routing</div>
+          <div className="col-span-2 border border-pink-500/15 rounded-2xl p-5 bg-gradient-to-br from-pink-500/5 to-rose-600/3">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-pink-500/10 flex items-center justify-center text-xl">
+                📦
               </div>
-              <CargoStatusDot status={statuses["cargo"]?.status || "idle"} />
+              <div className="flex-1">
+                <div className="text-xs font-bold text-pink-400 tracking-wider">CARGO AGENT</div>
+                <div className="text-[10px] text-gray-500 mt-0.5">Dosya analiz & departman routing</div>
+              </div>
+              <StatusIndicator status={statuses["cargo"]?.status || "idle"} />
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => setShowCargoModal(true)}
-                className="text-[9px] px-3 py-1.5 rounded bg-pink-500/10 text-pink-400 border border-pink-500/30 font-bold hover:bg-pink-500/20 transition-colors">
-                📤 Dosya Yukle
-              </button>
-              <button onClick={() => setShowTaskModal(true)}
-                className="text-[9px] px-3 py-1.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 font-bold hover:bg-indigo-500/20 transition-colors">
-                📋 Gorev Olustur
-              </button>
+            <div className="flex gap-2.5">
+              <ActionButton onClick={() => setShowCargoModal(true)}
+                icon="📤" label="Dosya Yukle" color="pink" />
+              <ActionButton onClick={() => setShowTaskModal(true)}
+                icon="📋" label="Gorev Olustur" color="indigo" />
               <button onClick={async () => {
                   if (autoStatus?.running) await stopAutonomousLoop();
                   else await startAutonomousLoop();
                   const s = await getAutonomousStatus();
                   setAutoStatus(s);
                 }}
-                className={`text-[9px] px-3 py-1.5 rounded font-bold border transition-colors ${
+                className={`flex items-center gap-1.5 text-[11px] px-4 py-2 rounded-lg font-semibold border transition-all ${
                   autoStatus?.running
-                    ? "bg-green-500/10 text-green-400 border-green-500/30"
-                    : "bg-gray-500/10 text-gray-400 border-gray-500/30"
+                    ? "bg-green-500/10 text-green-400 border-green-500/25 hover:bg-green-500/20"
+                    : "bg-gray-500/8 text-gray-400 border-gray-500/20 hover:bg-gray-500/15"
                 }`}>
-                {autoStatus?.running ? "▶ Otonom ACIK" : "⏸ Otonom KAPALI"}
+                <span className={`w-2 h-2 rounded-full ${autoStatus?.running ? "bg-green-500 pulse-dot" : "bg-gray-600"}`} />
+                {autoStatus?.running ? "Otonom ACIK" : "Otonom KAPALI"}
               </button>
             </div>
           </div>
 
           {/* EVENT FEED */}
-          <div className="border border-[#1a1f30] rounded-xl overflow-hidden">
-            <div className="px-3 py-2 text-[7px] text-gray-500 tracking-[2px] border-b border-[#1a1f3030] flex justify-between items-center">
+          <div className="border border-[#1a1f35] rounded-2xl overflow-hidden bg-[#0c0d18]/50">
+            <div className="px-4 py-2.5 text-[10px] text-gray-500 tracking-widest border-b border-[#1a1f35]/50 flex justify-between items-center font-medium">
               <span>EVENT FEED</span>
-              <span className="text-[6px] text-indigo-400">{events.length}</span>
+              <span className="text-[10px] text-indigo-400 font-code">{events.length}</span>
             </div>
-            <div className="h-[160px] overflow-y-auto p-2 space-y-1">
+            <div className="h-[180px] overflow-y-auto p-3 space-y-1.5">
               {events.length === 0 && (
-                <div className="text-center text-[8px] text-gray-600 py-8">Henuz event yok</div>
+                <div className="text-center text-[11px] text-gray-600 py-10">Henuz event yok</div>
               )}
               {events.map((ev, i) => (
-                <div key={i} className={`text-[8px] p-1.5 rounded border-l-2 bg-white/[0.01] ${
+                <div key={i} className={`text-[11px] p-2 rounded-lg border-l-2 bg-white/[0.01] ${
                   ev.type === "task_created" ? "border-l-green-500" :
                   ev.type === "warning" ? "border-l-red-500" :
                   ev.type === "inbox_check" ? "border-l-amber-500" : "border-l-indigo-500"
                 }`}>
-                  <div className="text-[6px] text-gray-500">
+                  <div className="text-[9px] text-gray-500 font-code">
                     {ev.timestamp?.split("T")[1]?.split(".")[0]} — {ev.agent_id}
-                    {ev.department_id && <span className="ml-1" style={{ color: DEPT_COLORS[ev.department_id] }}>[{ev.department_id}]</span>}
+                    {ev.department_id && (
+                      <span className="ml-1" style={{ color: DEPT_META[ev.department_id]?.color }}>
+                        [{ev.department_id}]
+                      </span>
+                    )}
                   </div>
-                  <div className="text-gray-400 truncate">{ev.message}</div>
+                  <div className="text-gray-400 truncate mt-0.5">{ev.message}</div>
                 </div>
               ))}
             </div>
@@ -219,14 +298,14 @@ export default function Home() {
         </div>
 
         {/* SERVER INFO */}
-        <div className="max-w-5xl mx-auto mt-3 flex items-center gap-4 text-[7px] text-gray-600 px-1">
-          <span>SERVER: {info?.name} v{info?.version}</span>
-          <span>|</span>
-          <span>Agents: {info?.agents}</span>
-          <span>|</span>
-          <span>Departments: {info?.departments}</span>
-          <span>|</span>
-          <span>Ticks: {autoStatus?.tick_count}</span>
+        <div className="max-w-5xl mx-auto mt-4 flex items-center gap-4 text-[10px] text-gray-600 px-1 font-code">
+          <span>{info?.name} v{info?.version}</span>
+          <span className="text-gray-700">|</span>
+          <span>{info?.agents} agents</span>
+          <span className="text-gray-700">|</span>
+          <span>{info?.departments} departments</span>
+          <span className="text-gray-700">|</span>
+          <span>{autoStatus?.tick_count} ticks</span>
         </div>
       </div>
 
@@ -237,28 +316,47 @@ export default function Home() {
   );
 }
 
-// ═══ STAT ═══
-function Stat({ value, label, color }: { value: number | string; label: string; color?: string }) {
+/* ═══ STAT BADGE ═══ */
+function StatBadge({ value, label, color, pulse }: { value: number | string; label: string; color?: string; pulse?: boolean }) {
   return (
     <div className="text-center">
-      <div className="text-sm font-extrabold" style={{ color }}>{value}</div>
-      <div className="text-[5px] text-gray-500 tracking-[2px] uppercase">{label}</div>
+      <div className={`text-base font-extrabold font-code ${pulse ? "glow-active rounded" : ""}`} style={{ color }}>
+        {value}
+      </div>
+      <div className="text-[8px] text-gray-500 tracking-widest uppercase font-medium">{label}</div>
     </div>
   );
 }
 
-// ═══ CARGO STATUS DOT ═══
-function CargoStatusDot({ status }: { status: string }) {
+/* ═══ STATUS INDICATOR ═══ */
+function StatusIndicator({ status }: { status: string }) {
   const isActive = ["working", "thinking", "coding", "searching"].includes(status);
+  const color = isActive ? "#22c55e" : status === "error" ? "#ef4444" : "#4b5563";
   return (
-    <div className="flex items-center gap-1">
-      <div className={`w-2 h-2 rounded-full ${isActive ? "bg-green-500 pulse-dot" : status === "error" ? "bg-red-500" : "bg-gray-600"}`} />
-      <span className="text-[7px] text-gray-500">{status}</span>
+    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md" style={{ background: `${color}10` }}>
+      <div className={`w-2 h-2 rounded-full ${isActive ? "pulse-dot" : ""}`} style={{ background: color }} />
+      <span className="text-[10px] font-code" style={{ color }}>{status}</span>
     </div>
   );
 }
 
-// ═══ TASK MODAL ═══
+/* ═══ ACTION BUTTON ═══ */
+function ActionButton({ onClick, icon, label, color }: {
+  onClick: () => void; icon: string; label: string; color: string;
+}) {
+  const colors: Record<string, string> = {
+    pink: "bg-pink-500/10 text-pink-400 border-pink-500/25 hover:bg-pink-500/20",
+    indigo: "bg-indigo-500/10 text-indigo-400 border-indigo-500/25 hover:bg-indigo-500/20",
+  };
+  return (
+    <button onClick={onClick}
+      className={`flex items-center gap-1.5 text-[11px] px-4 py-2 rounded-lg font-semibold border transition-all ${colors[color]}`}>
+      {icon} {label}
+    </button>
+  );
+}
+
+/* ═══ TASK MODAL ═══ */
 function TaskModal({ agents, departments, onClose }: {
   agents: CoworkAgent[]; departments: Department[]; onClose: () => void;
 }) {
@@ -277,36 +375,39 @@ function TaskModal({ agents, departments, onClose }: {
   const filteredAgents = deptId ? agents.filter(a => a.department_id === deptId) : agents;
 
   return (
-    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-[#0f1019] border border-[#fbbf2440] rounded-xl p-6 w-[440px]" onClick={e => e.stopPropagation()}>
-        <h2 className="text-sm font-bold text-amber-400 mb-4">📋 Gorev Olustur</h2>
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-[#0f1019] border border-amber-500/20 rounded-2xl p-6 w-[460px] shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h2 className="text-sm font-bold text-amber-400 mb-5 flex items-center gap-2">
+          <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">📋</span>
+          Gorev Olustur
+        </h2>
         <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Gorev basligi"
-          className="w-full bg-[#0a0b12] border border-[#1e293b] text-white font-mono text-[10px] p-2 rounded mb-2" />
+          className="w-full bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg mb-3 focus:border-amber-500/40 focus:outline-none transition-colors" />
         <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="Aciklama (opsiyonel)"
-          className="w-full bg-[#0a0b12] border border-[#1e293b] text-white font-mono text-[10px] p-2 rounded mb-2 h-20 resize-none" />
-        <div className="flex gap-2 mb-3">
+          className="w-full bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg mb-3 h-20 resize-none focus:border-amber-500/40 focus:outline-none transition-colors" />
+        <div className="flex gap-2 mb-4">
           <select value={deptId} onChange={e => { setDeptId(e.target.value); setAgent(""); }}
-            className="flex-1 bg-[#0a0b12] border border-[#1e293b] text-white font-mono text-[10px] p-2 rounded">
+            className="flex-1 bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg">
             <option value="">Tum Departmanlar</option>
             {departments.map(d => <option key={d.id} value={d.id}>{d.icon} {d.name}</option>)}
           </select>
           <select value={agent} onChange={e => setAgent(e.target.value)}
-            className="flex-1 bg-[#0a0b12] border border-[#1e293b] text-white font-mono text-[10px] p-2 rounded">
+            className="flex-1 bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg">
             <option value="">📦 Auto (Cargo)</option>
             {filteredAgents.map(a => <option key={a.id} value={a.id}>{a.icon} {a.name}</option>)}
           </select>
           <select value={priority} onChange={e => setPriority(e.target.value)}
-            className="w-24 bg-[#0a0b12] border border-[#1e293b] text-white font-mono text-[10px] p-2 rounded">
+            className="w-28 bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg">
             <option>normal</option><option>high</option><option>urgent</option>
           </select>
         </div>
         <div className="flex gap-2">
           <button onClick={submit}
-            className="px-4 py-2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 text-[10px] font-bold">
-            📋 Olustur
+            className="px-5 py-2.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/25 text-xs font-semibold hover:bg-indigo-500/20 transition-colors">
+            Olustur
           </button>
           <button onClick={onClose}
-            className="px-4 py-2 rounded bg-gray-500/10 text-gray-400 border border-gray-500/30 text-[10px] font-bold">
+            className="px-5 py-2.5 rounded-lg bg-gray-500/8 text-gray-400 border border-gray-500/20 text-xs font-semibold hover:bg-gray-500/15 transition-colors">
             Iptal
           </button>
         </div>
@@ -315,7 +416,7 @@ function TaskModal({ agents, departments, onClose }: {
   );
 }
 
-// ═══ CARGO MODAL ═══
+/* ═══ CARGO MODAL ═══ */
 function CargoModal({ onClose }: { onClose: () => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [description, setDescription] = useState("");
@@ -330,76 +431,86 @@ function CargoModal({ onClose }: { onClose: () => void }) {
       const r = await uploadCargo(file || undefined, description || undefined);
       setResult(r);
     } catch {
-      setResult({ success: false, error: "Upload hatasi" });
+      setResult({ success: false, error: "Upload hatasi" } as CargoResult);
     }
     setLoading(false);
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-[#0f1019] border border-[#f472b640] rounded-xl p-6 w-[440px]" onClick={e => e.stopPropagation()}>
-        <h2 className="text-sm font-bold text-pink-400 mb-4">📦 Cargo — Dosya Yukle</h2>
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-[#0f1019] border border-pink-500/20 rounded-2xl p-6 w-[460px] shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h2 className="text-sm font-bold text-pink-400 mb-5 flex items-center gap-2">
+          <span className="w-8 h-8 rounded-lg bg-pink-500/10 flex items-center justify-center">📦</span>
+          Cargo — Dosya Yukle
+        </h2>
 
         {!result ? (
           <>
-            <div className="border-2 border-dashed border-[#f472b630] rounded-lg p-6 text-center mb-3 cursor-pointer hover:border-pink-400/50 transition-colors"
+            <div className="border-2 border-dashed border-pink-500/20 rounded-xl p-8 text-center mb-4 cursor-pointer hover:border-pink-400/40 transition-colors"
               onClick={() => fileRef.current?.click()}>
               <input ref={fileRef} type="file" className="hidden" onChange={e => setFile(e.target.files?.[0] || null)} />
               {file ? (
-                <div className="text-[10px] text-pink-400">{file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
+                <div className="text-xs text-pink-400 font-medium">{file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
               ) : (
-                <div className="text-[10px] text-gray-500">Dosya secmek icin tiklayin</div>
+                <div>
+                  <div className="text-2xl mb-2">📂</div>
+                  <div className="text-xs text-gray-500">Dosya secmek icin tiklayin</div>
+                </div>
               )}
             </div>
             <textarea value={description} onChange={e => setDescription(e.target.value)}
               placeholder="Aciklama veya icerik (opsiyonel)"
-              className="w-full bg-[#0a0b12] border border-[#1e293b] text-white font-mono text-[10px] p-2 rounded mb-3 h-20 resize-none" />
+              className="w-full bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg mb-4 h-20 resize-none focus:border-pink-500/40 focus:outline-none transition-colors" />
             <div className="flex gap-2">
               <button onClick={submit} disabled={loading}
-                className="px-4 py-2 rounded bg-pink-500/10 text-pink-400 border border-pink-500/30 text-[10px] font-bold disabled:opacity-50">
+                className="px-5 py-2.5 rounded-lg bg-pink-500/10 text-pink-400 border border-pink-500/25 text-xs font-semibold disabled:opacity-50 hover:bg-pink-500/20 transition-colors">
                 {loading ? "Analiz ediliyor..." : "📤 Yukle & Analiz Et"}
               </button>
               <button onClick={onClose}
-                className="px-4 py-2 rounded bg-gray-500/10 text-gray-400 border border-gray-500/30 text-[10px] font-bold">
+                className="px-5 py-2.5 rounded-lg bg-gray-500/8 text-gray-400 border border-gray-500/20 text-xs font-semibold hover:bg-gray-500/15 transition-colors">
                 Iptal
               </button>
             </div>
           </>
         ) : (
-          <div className="space-y-2">
-            <div className={`text-[10px] font-bold ${result.success ? "text-green-400" : "text-red-400"}`}>
+          <div className="space-y-3">
+            <div className={`flex items-center gap-2 text-sm font-semibold ${result.success ? "text-green-400" : "text-red-400"}`}>
+              <span>{result.success ? "✓" : "✕"}</span>
               {result.success ? "Basarili!" : "Hata: " + result.error}
             </div>
             {result.success && (
-              <>
-                <div className="text-[9px] text-gray-400">
-                  Hedef Departman: <span className="text-white">{result.target_department_id}</span>
-                </div>
-                <div className="text-[9px] text-gray-400">
-                  Hedef Agent: <span className="text-white">{result.target_agent_id}</span>
-                </div>
-                <div className="text-[9px] text-gray-400">
-                  Guven: <span className="text-white">{result.confidence}%</span>
-                </div>
+              <div className="bg-[#0a0b12] rounded-xl p-4 space-y-2">
+                <InfoRow label="Hedef Departman" value={result.target_department_id} />
+                <InfoRow label="Hedef Agent" value={result.target_agent_id} />
+                <InfoRow label="Guven" value={`${result.confidence}%`} />
                 {result.reasoning && (
-                  <div className="text-[8px] text-gray-500 bg-[#0a0b12] p-2 rounded">{result.reasoning}</div>
+                  <div className="text-[11px] text-gray-400 mt-2 pt-2 border-t border-[#1a1f35]">{result.reasoning}</div>
                 )}
                 {result.keywords_found && result.keywords_found.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1.5 mt-2">
                     {result.keywords_found.map((k, i) => (
-                      <span key={i} className="text-[7px] px-1.5 py-0.5 rounded bg-pink-500/10 text-pink-300">{k}</span>
+                      <span key={i} className="text-[10px] px-2 py-0.5 rounded-md bg-pink-500/10 text-pink-300">{k}</span>
                     ))}
                   </div>
                 )}
-              </>
+              </div>
             )}
             <button onClick={onClose}
-              className="px-4 py-2 rounded bg-gray-500/10 text-gray-400 border border-gray-500/30 text-[10px] font-bold mt-2">
+              className="px-5 py-2.5 rounded-lg bg-gray-500/8 text-gray-400 border border-gray-500/20 text-xs font-semibold hover:bg-gray-500/15 transition-colors mt-2">
               Kapat
             </button>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="text-gray-500">{label}</span>
+      <span className="text-white font-medium font-code">{value || "—"}</span>
     </div>
   );
 }

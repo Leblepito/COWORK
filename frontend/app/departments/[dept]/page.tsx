@@ -14,7 +14,7 @@ import type {
 import {
   getDepartment, getCoworkAgents, getAgentStatuses,
   getAutonomousEvents, getAutonomousStatus,
-  spawnAgent, killAgent, createCoworkTask,
+  spawnAgent, killAgent,
 } from "@/lib/cowork-api";
 
 const DepartmentScene3D = dynamic(
@@ -37,7 +37,7 @@ export default function DepartmentPage() {
   const [events, setEvents] = useState<AutonomousEvent[]>([]);
   const [autoStatus, setAutoStatus] = useState<AutonomousStatus | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [connected, setConnected] = useState<boolean | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -53,9 +53,9 @@ export default function DepartmentPage() {
       setStatuses(st);
       setEvents(ev);
       setAutoStatus(au);
-      setError("");
+      setConnected(true);
     } catch {
-      setError("Baglanti hatasi");
+      setConnected(false);
     }
   }, [deptId]);
 
@@ -67,8 +67,10 @@ export default function DepartmentPage() {
           getAgentStatuses(),
           getAutonomousEvents(30, "", deptId),
         ]);
-        setStatuses(st); setEvents(ev); setError("");
-      } catch {}
+        setStatuses(st); setEvents(ev); setConnected(true);
+      } catch {
+        setConnected(false);
+      }
     }, 2000);
     return () => clearInterval(iv);
   }, [deptId]);
@@ -80,58 +82,90 @@ export default function DepartmentPage() {
 
   const selAgent = agents.find(a => a.id === selected);
 
+  // Connection error
+  if (connected === false && agents.length === 0) {
+    return (
+      <div className="h-screen flex items-center justify-center noise-bg">
+        <div className="text-center max-w-sm">
+          <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-2xl mx-auto mb-5">
+            ⚡
+          </div>
+          <h2 className="text-base font-bold text-white mb-2">Backend Baglantisi Yok</h2>
+          <p className="text-sm text-gray-400 mb-5">Sunucu calismiyor veya erisilemiyor.</p>
+          <div className="flex items-center gap-3 justify-center">
+            <Link href="/"
+              className="px-4 py-2 rounded-lg bg-gray-500/8 text-gray-400 border border-gray-500/20 text-xs font-semibold">
+              ← Ana Sayfa
+            </Link>
+            <button onClick={fetchAll}
+              className="px-4 py-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-semibold">
+              Tekrar Dene
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen flex flex-col">
       {/* HEADER */}
-      <header className="flex items-center justify-between px-4 py-2 border-b flex-shrink-0"
-        style={{ borderColor: `${color}30` }}>
+      <header className="flex items-center justify-between px-5 py-3 border-b flex-shrink-0 bg-[#0c0d18]/50 backdrop-blur-sm"
+        style={{ borderColor: `${color}25` }}>
         <div className="flex items-center gap-3">
           <Link href="/"
-            className="text-[10px] px-2 py-1 rounded border border-[#1a1f30] text-gray-400 hover:text-white hover:border-gray-500 transition-colors">
+            className="text-xs px-3 py-1.5 rounded-lg border border-[#1a1f35] text-gray-400 hover:text-white hover:border-gray-500 transition-colors font-medium">
             ← Geri
           </Link>
-          <span className="text-xl">{department?.icon}</span>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center text-xl" style={{ background: `${color}15` }}>
+            {department?.icon}
+          </div>
           <div>
-            <h1 className="text-xs font-extrabold tracking-[2px]" style={{ color }}>
+            <h1 className="text-sm font-bold tracking-wider" style={{ color }}>
               {department?.name || deptId.toUpperCase()}
             </h1>
-            <p className="text-[8px] text-gray-500">{department?.description}</p>
+            <p className="text-[10px] text-gray-500">{department?.description}</p>
           </div>
         </div>
-        <div className="flex items-center gap-4 text-center">
-          <Stat value={agents.length} label="AGENTS" color={color} />
-          <Stat value={liveCount} label="LIVE" color="#22c55e" />
-          <Stat value={autoStatus?.tick_count ?? 0} label="TICKS" color="#818cf8" />
-          {error && <span className="text-[8px] text-red-400">{error}</span>}
+        <div className="flex items-center gap-5">
+          <StatBadge value={agents.length} label="AGENTS" color={color} />
+          <StatBadge value={liveCount} label="LIVE" color="#22c55e" />
+          <StatBadge value={autoStatus?.tick_count ?? 0} label="TICKS" color="#818cf8" />
+          {connected === false && (
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-500/10 border border-red-500/20">
+              <div className="w-1.5 h-1.5 rounded-full bg-red-500 pulse-dot" />
+              <span className="text-[10px] text-red-400">Offline</span>
+            </div>
+          )}
         </div>
       </header>
 
       {/* MAIN */}
       <div className="flex-1 flex overflow-hidden">
         {/* LEFT SIDEBAR — agents */}
-        <aside className="w-[200px] border-r border-[#1a1f30] flex flex-col flex-shrink-0">
-          <div className="px-3 py-2 text-[7px] text-gray-500 tracking-[2px] border-b border-[#1a1f3030] flex justify-between items-center">
+        <aside className="w-[220px] border-r border-[#1a1f35] flex flex-col flex-shrink-0 bg-[#0c0d18]/30">
+          <div className="px-4 py-3 text-[10px] text-gray-500 tracking-widest border-b border-[#1a1f35]/50 flex justify-between items-center font-medium">
             <span>AGENTS ({agents.length})</span>
             <button onClick={() => agents.forEach(a => spawnAgent(a.id))}
-              className="text-[6px] px-2 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20 font-bold">
+              className="text-[9px] px-2.5 py-1 rounded-md bg-green-500/10 text-green-400 border border-green-500/25 hover:bg-green-500/20 font-semibold transition-colors">
               ▶ ALL
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-1 space-y-0.5">
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {agents.map(a => {
               const st = statuses[a.id]?.status || "idle";
               const isActive = ["working", "thinking", "coding", "searching"].includes(st);
               return (
                 <button key={a.id} onClick={() => setSelected(a.id)}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-all text-[9px]
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left transition-all text-xs
                     ${selected === a.id ? "bg-indigo-500/10 border border-indigo-500/20" : "border border-transparent hover:bg-white/[0.02]"}
                     ${isActive ? "border-l-2 !border-l-green-500" : ""}`}>
-                  <span className="text-sm flex-shrink-0">{a.icon}</span>
+                  <span className="text-base flex-shrink-0">{a.icon}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="font-bold truncate" style={{ color: a.color }}>{a.name}</div>
-                    <div className="text-[6px] text-gray-500 tracking-wider">{a.tier}</div>
+                    <div className="font-semibold truncate" style={{ color: a.color }}>{a.name}</div>
+                    <div className="text-[9px] text-gray-500 tracking-wider">{a.tier}</div>
                   </div>
-                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-green-500 pulse-dot" : st === "error" ? "bg-red-500" : "bg-gray-600"}`} />
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? "bg-green-500 pulse-dot" : st === "error" ? "bg-red-500" : "bg-gray-600"}`} />
                 </button>
               );
             })}
@@ -149,36 +183,38 @@ export default function DepartmentPage() {
 
           {/* Agent detail overlay */}
           {selAgent && (
-            <div className="absolute top-2 left-2 w-[260px] bg-[#0b0c14]/95 border border-[#1a1f30] rounded-lg p-3 backdrop-blur z-10">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-2xl">{selAgent.icon}</span>
-                <div>
-                  <div className="text-sm font-extrabold" style={{ color: selAgent.color }}>{selAgent.name}</div>
-                  <div className="text-[7px] text-gray-500">{selAgent.tier} — {selAgent.domain}</div>
+            <div className="absolute top-3 left-3 w-[280px] bg-[#0c0d18]/95 border border-[#1a1f35] rounded-2xl p-4 backdrop-blur-md z-10 shadow-2xl">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl" style={{ background: `${selAgent.color}15` }}>
+                  {selAgent.icon}
                 </div>
-                <button onClick={() => setSelected(null)} className="ml-auto text-gray-500 hover:text-white text-xs">✕</button>
+                <div className="flex-1">
+                  <div className="text-sm font-bold" style={{ color: selAgent.color }}>{selAgent.name}</div>
+                  <div className="text-[10px] text-gray-500">{selAgent.tier} — {selAgent.domain}</div>
+                </div>
+                <button onClick={() => setSelected(null)} className="text-gray-500 hover:text-white text-sm transition-colors">✕</button>
               </div>
-              <p className="text-[9px] text-gray-400 mb-2">{selAgent.desc}</p>
-              <div className="flex gap-1.5 mb-2">
+              <p className="text-xs text-gray-400 mb-3 leading-relaxed">{selAgent.desc}</p>
+              <div className="flex gap-2 mb-3">
                 <button onClick={() => spawnAgent(selAgent.id)}
-                  className="text-[8px] px-2 py-1 rounded bg-green-500/10 text-green-400 border border-green-500/30 font-bold">
+                  className="text-[10px] px-3 py-1.5 rounded-lg bg-green-500/10 text-green-400 border border-green-500/25 font-semibold hover:bg-green-500/20 transition-colors">
                   ▶ Baslat
                 </button>
                 <button onClick={() => killAgent(selAgent.id)}
-                  className="text-[8px] px-2 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/30 font-bold">
+                  className="text-[10px] px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 border border-red-500/25 font-semibold hover:bg-red-500/20 transition-colors">
                   ⏹ Durdur
                 </button>
               </div>
-              <div className="text-[7px] text-gray-500 mb-1 tracking-wider">SKILLS</div>
-              <div className="flex flex-wrap gap-1 mb-2">
+              <div className="text-[9px] text-gray-500 mb-1.5 tracking-widest font-medium">SKILLS</div>
+              <div className="flex flex-wrap gap-1.5 mb-3">
                 {selAgent.skills?.map(s => (
-                  <span key={s} className="text-[7px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300">{s}</span>
+                  <span key={s} className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-300">{s}</span>
                 ))}
               </div>
               {statuses[selAgent.id]?.lines?.length > 0 && (
-                <div className="bg-[#09090f] rounded p-2 max-h-[120px] overflow-y-auto mt-2">
+                <div className="bg-[#09090f] rounded-lg p-2.5 max-h-[130px] overflow-y-auto mt-2 font-code">
                   {statuses[selAgent.id].lines.slice(-10).map((l, i) => (
-                    <div key={i} className="text-[8px] text-gray-400 whitespace-pre-wrap">{l}</div>
+                    <div key={i} className="text-[10px] text-gray-400 whitespace-pre-wrap leading-relaxed">{l}</div>
                   ))}
                 </div>
               )}
@@ -187,24 +223,24 @@ export default function DepartmentPage() {
         </main>
 
         {/* RIGHT PANEL — events */}
-        <aside className="w-[200px] border-l border-[#1a1f30] flex flex-col flex-shrink-0">
-          <div className="px-3 py-2 text-[7px] text-gray-500 tracking-[2px] border-b border-[#1a1f3030]">
+        <aside className="w-[220px] border-l border-[#1a1f35] flex flex-col flex-shrink-0 bg-[#0c0d18]/30">
+          <div className="px-4 py-3 text-[10px] text-gray-500 tracking-widest border-b border-[#1a1f35]/50 font-medium">
             EVENT FEED
           </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
             {events.length === 0 && (
-              <div className="text-center text-[8px] text-gray-600 py-8">Henuz event yok</div>
+              <div className="text-center text-[11px] text-gray-600 py-10">Henuz event yok</div>
             )}
             {events.map((ev, i) => (
-              <div key={i} className={`text-[8px] p-1.5 rounded border-l-2 bg-white/[0.01] ${
+              <div key={i} className={`text-[11px] p-2 rounded-lg border-l-2 bg-white/[0.01] ${
                 ev.type === "task_created" ? "border-l-green-500" :
                 ev.type === "warning" ? "border-l-red-500" :
                 ev.type === "inbox_check" ? "border-l-amber-500" : "border-l-indigo-500"
               }`}>
-                <div className="text-[6px] text-gray-500">
+                <div className="text-[9px] text-gray-500 font-code">
                   {ev.timestamp?.split("T")[1]?.split(".")[0]} — {ev.agent_id}
                 </div>
-                <div className="text-gray-400 truncate">{ev.message}</div>
+                <div className="text-gray-400 truncate mt-0.5">{ev.message}</div>
               </div>
             ))}
           </div>
@@ -214,11 +250,11 @@ export default function DepartmentPage() {
   );
 }
 
-function Stat({ value, label, color }: { value: number | string; label: string; color?: string }) {
+function StatBadge({ value, label, color }: { value: number | string; label: string; color?: string }) {
   return (
     <div className="text-center">
-      <div className="text-sm font-extrabold" style={{ color }}>{value}</div>
-      <div className="text-[5px] text-gray-500 tracking-[2px] uppercase">{label}</div>
+      <div className="text-base font-extrabold font-code" style={{ color }}>{value}</div>
+      <div className="text-[8px] text-gray-500 tracking-widest uppercase font-medium">{label}</div>
     </div>
   );
 }
