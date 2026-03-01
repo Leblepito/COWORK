@@ -3,7 +3,8 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --legacy-peer-deps
 COPY . .
-ARG NEXT_PUBLIC_COWORK_API_URL
+ARG NEXT_PUBLIC_COWORK_API_URL=https://backend-production-2161.up.railway.app/api
+ENV NEXT_PUBLIC_COWORK_API_URL=${NEXT_PUBLIC_COWORK_API_URL}
 RUN npm run build
 
 FROM node:20-alpine AS runner
