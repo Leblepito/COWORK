@@ -7,6 +7,7 @@ on:
 
 env:
   RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+  RAILWAY_PROJECT_ID: 78ef3a62-9691-4ece-a6cd-f5a46fb79a3b
 
 jobs:
   deploy:
@@ -26,91 +27,154 @@ jobs:
           set +e
           REPORT="## Railway Deploy Report — $(date -u '+%Y-%m-%d %H:%M UTC')\n\n"
 
-          # 1. Get project info via API
-          REPORT+="### Project Info\n\`\`\`\n"
-          API_RESULT=$(curl -sf -X POST \
+          GQL_URL="https://backboard.railway.app/graphql/v2"
+
+          # 1. Try project-scoped query (works with project tokens)
+          REPORT+="### Project Discovery\n\`\`\`\n"
+          PROJECT_RESULT=$(curl -s -X POST \
             -H "Authorization: Bearer $RAILWAY_TOKEN" \
             -H "Content-Type: application/json" \
-            "https://backboard.railway.app/graphql/v2" \
-            -d '{"query":"query { projects { edges { node { id name services { edges { node { id name } } } environments { edges { node { id name } } } } } } }"}')
-          API_EXIT=$?
+            "$GQL_URL" \
+            -d "{\"query\":\"query { project(id: \\\"$RAILWAY_PROJECT_ID\\\") { id name services { edges { node { id name } } } environments { edges { node { id name } } } } }\"}")
 
-          if [ $API_EXIT -ne 0 ] || [ -z "$API_RESULT" ]; then
-            REPORT+="API call failed (exit: $API_EXIT). Trying CLI...\n"
+          PROJECT_NAME=$(echo "$PROJECT_RESULT" | jq -r '.data.project.name // empty' 2>/dev/null)
 
-            # Fallback: use CLI
-            CLI_STATUS=$(railway status 2>&1)
-            REPORT+="CLI status:\n$CLI_STATUS\n"
-            REPORT+="\`\`\`\n\n"
+          if [ -z "$PROJECT_NAME" ]; then
+            # Fallback: try listing all projects (account-scoped token)
+            REPORT+="Project-scoped query failed, trying account-scoped...\n"
+            API_RESULT=$(curl -s -X POST \
+              -H "Authorization: Bearer $RAILWAY_TOKEN" \
+              -H "Content-Type: application/json" \
+              "$GQL_URL" \
+              -d '{"query":"query { projects { edges { node { id name services { edges { node { id name } } } environments { edges { node { id name } } } } } } }"}')
+            PROJECT_NAME=$(echo "$API_RESULT" | jq -r '.data.projects.edges[0]?.node.name // empty' 2>/dev/null)
 
-            # Try CLI-based deploy
-            REPORT+="### CLI Deploy\n\`\`\`\n"
-            cd backend
-            REPORT+="Backend: $(railway up --detach 2>&1)\n"
-            cd ..
-            REPORT+="Frontend: $(railway up --detach 2>&1)\n"
-            REPORT+="\`\`\`\n"
-          else
-            echo "$API_RESULT" | jq '.' 2>/dev/null | head -40
-            REPORT+="$(echo "$API_RESULT" | jq -r '.data.projects.edges[]?.node | "Project: \(.name) (\(.id))\nServices: \([.services.edges[]?.node.name] | join(", "))\nEnvironments: \([.environments.edges[]?.node | "\(.name) (\(.id))"] | join(", "))"' 2>/dev/null)\n"
-            REPORT+="\`\`\`\n\n"
-
-            # 2. Extract service and environment IDs
-            SERVICES=$(echo "$API_RESULT" | jq -r '.data.projects.edges[]?.node | .id as $pid | (.environments.edges[]?.node | select(.name == "production") | .id) as $eid | .services.edges[]?.node | "\($pid)|\($eid)|\(.id)|\(.name)"' 2>/dev/null)
-
-            if [ -z "$SERVICES" ]; then
-              REPORT+="### Warning\nNo services found in production environment.\n\n"
-            else
-              # 3. Set COWORK_API_URL on frontend service if needed
-              REPORT+="### Environment Variables\n\`\`\`\n"
-              BACKEND_URL=""
-              FRONTEND_SID=""
-              while IFS= read -r line; do
-                SID=$(echo "$line" | cut -d'|' -f3)
-                SNAME=$(echo "$line" | cut -d'|' -f4)
-                PID=$(echo "$line" | cut -d'|' -f1)
-                EID=$(echo "$line" | cut -d'|' -f2)
-
-                # Get service domain
-                DOMAIN_RESULT=$(curl -sf -X POST \
-                  -H "Authorization: Bearer $RAILWAY_TOKEN" \
-                  -H "Content-Type: application/json" \
-                  "https://backboard.railway.app/graphql/v2" \
-                  -d "{\"query\":\"query { service(id: \\\"$SID\\\") { serviceInstances { edges { node { domains { serviceDomains { domain } } } } } } }\"}")
-                DOMAIN=$(echo "$DOMAIN_RESULT" | jq -r '.data.service.serviceInstances.edges[0]?.node.domains.serviceDomains[0]?.domain // empty' 2>/dev/null)
-                REPORT+="$SNAME: domain=$DOMAIN\n"
-
-                case "$SNAME" in
-                  *ackend*|*api*|*server*|*Backend*)
-                    BACKEND_URL="https://$DOMAIN"
-                    REPORT+="  -> Backend URL: $BACKEND_URL\n"
-                    ;;
-                  *rontend*|*web*|*Frontend*)
-                    FRONTEND_SID="$SID"
-                    REPORT+="  -> Frontend service ID: $FRONTEND_SID\n"
-                    ;;
-                esac
-              done <<< "$SERVICES"
+            if [ -z "$PROJECT_NAME" ]; then
+              REPORT+="Both queries failed.\n"
+              REPORT+="Project-scoped response: $(echo "$PROJECT_RESULT" | head -c 500)\n"
+              REPORT+="Account-scoped response: $(echo "$API_RESULT" | head -c 500)\n"
               REPORT+="\`\`\`\n\n"
 
-              # 4. Trigger redeploy for all services
-              REPORT+="### Redeploy\n\`\`\`\n"
-              while IFS= read -r line; do
-                PID=$(echo "$line" | cut -d'|' -f1)
-                EID=$(echo "$line" | cut -d'|' -f2)
-                SID=$(echo "$line" | cut -d'|' -f3)
-                SNAME=$(echo "$line" | cut -d'|' -f4)
-                REPORT+="Redeploying $SNAME...\n"
-                RESULT=$(curl -sf -X POST \
-                  -H "Authorization: Bearer $RAILWAY_TOKEN" \
-                  -H "Content-Type: application/json" \
-                  "https://backboard.railway.app/graphql/v2" \
-                  -d "{\"query\":\"mutation { serviceInstanceRedeploy(environmentId: \\\"$EID\\\", serviceId: \\\"$SID\\\") }\"}")
-                REPORT+="  Result: $RESULT\n"
-              done <<< "$SERVICES"
+              # CLI fallback
+              REPORT+="### CLI Fallback\n\`\`\`\n"
+              REPORT+="whoami: $(railway whoami 2>&1)\n"
+              REPORT+="status: $(railway status 2>&1)\n"
+              REPORT+="environment: $(railway environment 2>&1)\n"
               REPORT+="\`\`\`\n"
+
+              echo -e "$REPORT" > /tmp/report.md
+              cat /tmp/report.md
+              gh issue comment 30 -R Leblepito/COWORK -F /tmp/report.md
+              exit 0
             fi
+
+            # Use account-scoped result
+            PROJECT_RESULT="$API_RESULT"
+            # Restructure to match project-scoped format
+            PROJECT_RESULT=$(echo "$API_RESULT" | jq '{data:{project:.data.projects.edges[0].node}}' 2>/dev/null)
           fi
+
+          # We have project data — extract info
+          PROJ_ID=$(echo "$PROJECT_RESULT" | jq -r '.data.project.id' 2>/dev/null)
+          REPORT+="Project: $PROJECT_NAME ($PROJ_ID)\n"
+
+          # List services
+          SVCLIST=$(echo "$PROJECT_RESULT" | jq -r '.data.project.services.edges[]?.node | "\(.name) (\(.id))"' 2>/dev/null)
+          REPORT+="Services: $SVCLIST\n"
+
+          # List environments
+          ENVLIST=$(echo "$PROJECT_RESULT" | jq -r '.data.project.environments.edges[]?.node | "\(.name) (\(.id))"' 2>/dev/null)
+          REPORT+="Environments: $ENVLIST\n"
+          REPORT+="\`\`\`\n\n"
+
+          # 2. Pick environment — prefer "production", fallback to first
+          ENV_ID=$(echo "$PROJECT_RESULT" | jq -r '.data.project.environments.edges[]?.node | select(.name == "production") | .id' 2>/dev/null)
+          ENV_NAME="production"
+          if [ -z "$ENV_ID" ]; then
+            ENV_ID=$(echo "$PROJECT_RESULT" | jq -r '.data.project.environments.edges[0]?.node.id' 2>/dev/null)
+            ENV_NAME=$(echo "$PROJECT_RESULT" | jq -r '.data.project.environments.edges[0]?.node.name' 2>/dev/null)
+          fi
+
+          if [ -z "$ENV_ID" ] || [ "$ENV_ID" = "null" ]; then
+            REPORT+="### Error\nNo environments found.\n"
+            echo -e "$REPORT" > /tmp/report.md
+            cat /tmp/report.md
+            gh issue comment 30 -R Leblepito/COWORK -F /tmp/report.md
+            exit 0
+          fi
+
+          REPORT+="### Using Environment: $ENV_NAME ($ENV_ID)\n\n"
+
+          # 3. Get service details and domains
+          SERVICES=$(echo "$PROJECT_RESULT" | jq -r ".data.project.services.edges[]?.node | \"$PROJ_ID|$ENV_ID|\(.id)|\(.name)\"" 2>/dev/null)
+
+          if [ -z "$SERVICES" ]; then
+            REPORT+="### Warning\nNo services found.\n"
+            echo -e "$REPORT" > /tmp/report.md
+            cat /tmp/report.md
+            gh issue comment 30 -R Leblepito/COWORK -F /tmp/report.md
+            exit 0
+          fi
+
+          REPORT+="### Service Domains\n\`\`\`\n"
+          BACKEND_URL=""
+          FRONTEND_SID=""
+          while IFS= read -r line; do
+            PID=$(echo "$line" | cut -d'|' -f1)
+            EID=$(echo "$line" | cut -d'|' -f2)
+            SID=$(echo "$line" | cut -d'|' -f3)
+            SNAME=$(echo "$line" | cut -d'|' -f4)
+
+            # Get service domain
+            DOMAIN_RESULT=$(curl -s -X POST \
+              -H "Authorization: Bearer $RAILWAY_TOKEN" \
+              -H "Content-Type: application/json" \
+              "$GQL_URL" \
+              -d "{\"query\":\"query { service(id: \\\"$SID\\\") { serviceInstances { edges { node { domains { serviceDomains { domain } } } } } } }\"}")
+            DOMAIN=$(echo "$DOMAIN_RESULT" | jq -r '.data.service.serviceInstances.edges[0]?.node.domains.serviceDomains[0]?.domain // empty' 2>/dev/null)
+            REPORT+="$SNAME: domain=$DOMAIN\n"
+
+            case "$SNAME" in
+              *ackend*|*api*|*server*|*Backend*)
+                BACKEND_URL="https://$DOMAIN"
+                REPORT+="  -> Backend URL: $BACKEND_URL\n"
+                ;;
+              *rontend*|*web*|*Frontend*)
+                FRONTEND_SID="$SID"
+                REPORT+="  -> Frontend service ID: $FRONTEND_SID\n"
+                ;;
+            esac
+          done <<< "$SERVICES"
+          REPORT+="\`\`\`\n\n"
+
+          # 4. Set COWORK_API_URL on frontend if backend URL found
+          if [ -n "$BACKEND_URL" ] && [ -n "$FRONTEND_SID" ]; then
+            REPORT+="### Environment Variable Update\n\`\`\`\n"
+            REPORT+="Setting NEXT_PUBLIC_COWORK_API_URL=$BACKEND_URL/api on frontend...\n"
+            VAR_RESULT=$(curl -s -X POST \
+              -H "Authorization: Bearer $RAILWAY_TOKEN" \
+              -H "Content-Type: application/json" \
+              "$GQL_URL" \
+              -d "{\"query\":\"mutation { variableUpsert(input: { projectId: \\\"$PROJ_ID\\\", environmentId: \\\"$EID\\\", serviceId: \\\"$FRONTEND_SID\\\", name: \\\"NEXT_PUBLIC_COWORK_API_URL\\\", value: \\\"$BACKEND_URL/api\\\" }) }\"}")
+            REPORT+="Result: $VAR_RESULT\n"
+            REPORT+="\`\`\`\n\n"
+          fi
+
+          # 5. Trigger redeploy for all services
+          REPORT+="### Redeploy\n\`\`\`\n"
+          while IFS= read -r line; do
+            EID=$(echo "$line" | cut -d'|' -f2)
+            SID=$(echo "$line" | cut -d'|' -f3)
+            SNAME=$(echo "$line" | cut -d'|' -f4)
+            REPORT+="Redeploying $SNAME...\n"
+            RESULT=$(curl -s -X POST \
+              -H "Authorization: Bearer $RAILWAY_TOKEN" \
+              -H "Content-Type: application/json" \
+              "$GQL_URL" \
+              -d "{\"query\":\"mutation { serviceInstanceRedeploy(environmentId: \\\"$EID\\\", serviceId: \\\"$SID\\\") }\"}")
+            REPORT+="  Result: $RESULT\n"
+          done <<< "$SERVICES"
+          REPORT+="\`\`\`\n"
 
           # Post report to issue #30
           echo -e "$REPORT" > /tmp/report.md
