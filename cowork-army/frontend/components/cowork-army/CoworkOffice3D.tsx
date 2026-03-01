@@ -1,20 +1,21 @@
 "use client";
 /**
- * COWORK.ARMY — 3D Office Scene (v6)
- * Advanced: CharacterBuilder avatars, movement, collaboration beams, speech bubbles
+ * COWORK.ARMY — 3D Office Scene (v7)
+ * 4 themed departments + cargo hub, 14 agents, collaboration beams
  */
 import { useRef, useMemo, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Text, ContactShadows, Grid } from "@react-three/drei";
 import * as THREE from "three";
 import type { CoworkAgent, AgentStatus, AutonomousEvent } from "@/lib/cowork-api";
-import { DESK_POSITIONS, ZONES, STATUS_COLORS } from "./scene-constants";
+import { DESK_POSITIONS, ZONES, STATUS_COLORS, DEPARTMENTS, DEPT_COLORS } from "./scene-constants";
 import AdvancedAgentAvatar from "./AgentAvatar";
 import AdvancedAgentDesk from "./AgentDesk";
 import SpeechBubble from "./SpeechBubble";
 import CollaborationBeam from "./collaboration/CollaborationBeam";
 import { detectCollaborations } from "./collaboration/CollaborationDetector";
 import { useMovementSystem, type CollaborationPair } from "./movement/MovementSystem";
+import { TradeDepartment, MedicalDepartment, HotelDepartment, SoftwareDepartment, CargoHub } from "./departments";
 
 // ═══ STATUS LED ═══
 function StatusLED({ position, color, active }: { position: [number, number, number]; color: string; active: boolean }) {
@@ -61,7 +62,7 @@ function AgentNode({
       <StatusLED
         position={[pos[0], pos[1] + 1.3, pos[2]]}
         color={stColor}
-        active={["working", "thinking", "coding", "searching", "planning"].includes(st)}
+        active={["working", "thinking", "coding", "searching", "planning", "delivering"].includes(st)}
       />
       {/* Advanced Avatar */}
       <AdvancedAgentAvatar
@@ -79,7 +80,7 @@ function AgentNode({
 }
 
 // ═══ ZONE BORDERS ═══
-function ZoneBorder({ zone }: { zone: typeof ZONES[0] }) {
+function ZoneBorder({ zone }: { zone: (typeof ZONES)[0] }) {
   const hw = zone.size[0] / 2 + 0.5;
   const hd = zone.size[1] / 2 + 0.5;
   const y = 0.02;
@@ -95,7 +96,7 @@ function ZoneBorder({ zone }: { zone: typeof ZONES[0] }) {
       <lineSegments geometry={geom}>
         <lineBasicMaterial color={zone.color} transparent opacity={0.3} />
       </lineSegments>
-      <Text position={[0, 0.05, -hd - 0.3]} fontSize={0.15} color={zone.color}
+      <Text position={[0, 0.05, -hd - 0.3]} fontSize={0.2} color={zone.color}
         anchorX="center" anchorY="middle">
         {zone.label}
       </Text>
@@ -110,16 +111,16 @@ function CenterHologram() {
     if (ref.current) ref.current.rotation.y = clock.getElapsedTime() * 0.5;
   });
   return (
-    <group position={[0, 2, -4]}>
+    <group position={[0, 4, 0]}>
       <mesh ref={ref}>
-        <boxGeometry args={[1, 1, 1]} />
+        <boxGeometry args={[1.2, 1.2, 1.2]} />
         <meshStandardMaterial color="#fbbf24" wireframe transparent opacity={0.15} emissive="#fbbf24" emissiveIntensity={0.3} />
       </mesh>
-      <Text position={[0, 0, 0.55]} fontSize={0.12} color="#fbbf24" anchorX="center" anchorY="middle">
+      <Text position={[0, 0, 0.65]} fontSize={0.14} color="#fbbf24" anchorX="center" anchorY="middle">
         COWORK.ARMY
       </Text>
-      <Text position={[0, -0.2, 0.55]} fontSize={0.08} color="#64748b" anchorX="center" anchorY="middle">
-        v6.0
+      <Text position={[0, -0.25, 0.65]} fontSize={0.09} color="#64748b" anchorX="center" anchorY="middle">
+        v7.0
       </Text>
     </group>
   );
@@ -130,7 +131,7 @@ function DynamicAgentZone({ agents, statuses }: { agents: CoworkAgent[]; statuse
   if (agents.length === 0) return null;
 
   return (
-    <group position={[0, 0, 3]}>
+    <group position={[0, 0, 18]}>
       <Text position={[0, 0.05, -1.5]} fontSize={0.15} color="#64748b" anchorX="center" anchorY="middle">
         DYNAMIC AGENTS
       </Text>
@@ -192,7 +193,6 @@ function InnerScene({
   // Build latest message map from events (most recent per agent)
   const latestMessages = useMemo(() => {
     const map: Record<string, string> = {};
-    // Events are newest-first, take only the first per agent
     for (const ev of events) {
       if (!map[ev.agent_id] && ev.message) {
         map[ev.agent_id] = ev.message.length > 60 ? ev.message.slice(0, 57) + "..." : ev.message;
@@ -214,22 +214,34 @@ function InnerScene({
   return (
     <>
       {/* Lighting */}
-      <ambientLight intensity={0.3} />
-      <directionalLight position={[10, 15, 10]} intensity={0.5} castShadow />
-      <spotLight position={[-7, 8, -6]} angle={0.4} penumbra={0.5} intensity={0.6} color="#fbbf24" />
-      <spotLight position={[0, 8, -4]} angle={0.5} penumbra={0.5} intensity={0.8} color="#a78bfa" />
-      <spotLight position={[7, 8, -5]} angle={0.4} penumbra={0.5} intensity={0.5} color="#22c55e" />
+      <ambientLight intensity={0.25} />
+      <directionalLight position={[15, 20, 15]} intensity={0.4} castShadow />
+
+      {/* Department spot lights */}
+      <spotLight position={[-12, 10, -8]} angle={0.5} penumbra={0.5} intensity={0.6} color={DEPT_COLORS.trade} />
+      <spotLight position={[12, 10, -8]} angle={0.5} penumbra={0.5} intensity={0.6} color={DEPT_COLORS.medical} />
+      <spotLight position={[-12, 10, 8]} angle={0.5} penumbra={0.5} intensity={0.6} color={DEPT_COLORS.hotel} />
+      <spotLight position={[12, 10, 8]} angle={0.5} penumbra={0.5} intensity={0.6} color={DEPT_COLORS.software} />
+      {/* Cargo hub light */}
+      <spotLight position={[0, 12, 0]} angle={0.6} penumbra={0.5} intensity={0.8} color="#f59e0b" />
 
       {/* Floor */}
-      <Grid args={[30, 30]} cellSize={1} cellThickness={0.5} cellColor="#1a1a2e"
+      <Grid args={[50, 50]} cellSize={1} cellThickness={0.5} cellColor="#1a1a2e"
         sectionSize={5} sectionThickness={1} sectionColor="#252540"
-        position={[0, 0, -4]} fadeDistance={25} />
-      <ContactShadows position={[0, 0, -4]} opacity={0.3} scale={30} blur={2} />
+        position={[0, 0, 0]} fadeDistance={40} />
+      <ContactShadows position={[0, 0, 0]} opacity={0.3} scale={50} blur={2} />
 
-      {/* Zones */}
+      {/* Zone borders */}
       {ZONES.map(z => <ZoneBorder key={z.id} zone={z} />)}
 
-      {/* Base Agent Nodes */}
+      {/* ══════ Department Environments ══════ */}
+      <TradeDepartment position={[DEPARTMENTS.trade.center[0], 0, DEPARTMENTS.trade.center[2]]} />
+      <MedicalDepartment position={[DEPARTMENTS.medical.center[0], 0, DEPARTMENTS.medical.center[2]]} />
+      <HotelDepartment position={[DEPARTMENTS.hotel.center[0], 0, DEPARTMENTS.hotel.center[2]]} />
+      <SoftwareDepartment position={[DEPARTMENTS.software.center[0], 0, DEPARTMENTS.software.center[2]]} />
+      <CargoHub position={[0, 0, 0]} />
+
+      {/* ══════ Base Agent Nodes ══════ */}
       {baseAgents.map((a: CoworkAgent) => (
         <group key={a.id}>
           <AgentNode
@@ -245,7 +257,7 @@ function InnerScene({
       {/* Dynamic Agents */}
       <DynamicAgentZone agents={dynamicAgents} statuses={statuses} />
 
-      {/* Collaboration Beams */}
+      {/* ══════ Collaboration Beams ══════ */}
       {collaborations.map((collab: CollaborationPair, i: number) => {
         const fromPos = DESK_POSITIONS[collab.agentA];
         const toAgent = movementStates[collab.agentB];
@@ -270,7 +282,7 @@ function InnerScene({
       <CenterHologram />
 
       {/* Camera controls */}
-      <OrbitControls minDistance={5} maxDistance={30} target={[0, 0, -4]}
+      <OrbitControls minDistance={8} maxDistance={50} target={[0, 0, 0]}
         enablePan enableZoom enableRotate />
     </>
   );
@@ -285,7 +297,7 @@ export default function CoworkOffice3D({
   events: AutonomousEvent[];
 }) {
   return (
-    <Canvas camera={{ position: [12, 10, 12], fov: 45 }} shadows
+    <Canvas camera={{ position: [0, 30, 30], fov: 50 }} shadows
       style={{ width: "100%", height: "100%", background: "#060710" }}>
       <InnerScene agents={agents} statuses={statuses} events={events} />
     </Canvas>

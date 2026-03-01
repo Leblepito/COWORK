@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-COWORK.ARMY — Server v5 (PostgreSQL + async)
+COWORK.ARMY — Server v7 (PostgreSQL + async)
 FastAPI backend matching CLAUDE.md spec exactly.
 """
 import asyncio
@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import setup_db, get_db
 from database.connection import set_event_loop
+from database.models import Agent
+from sqlalchemy import select, delete
 from registry import BASE_AGENTS
 from runner import spawn_agent, kill_agent, get_statuses, get_output
 from commander import delegate_task, create_dynamic_agent
@@ -36,6 +38,21 @@ async def lifespan(app):
     # Seed base agents
     await db.seed_base_agents(BASE_AGENTS)
 
+    # Cleanup old base agents not in new registry
+    new_ids = {a["id"] for a in BASE_AGENTS}
+    async with db._sf() as session:
+        result = await session.execute(
+            select(Agent.id).where(Agent.is_base == True)
+        )
+        existing_base_ids = {row[0] for row in result.all()}
+        stale_ids = existing_base_ids - new_ids
+        if stale_ids:
+            await session.execute(
+                delete(Agent).where(Agent.id.in_(stale_ids))
+            )
+            await session.commit()
+            logger.info(f"Removed {len(stale_ids)} old base agents: {stale_ids}")
+
     # Setup workspace directories
     agents = await db.get_all_agents()
     for a in agents:
@@ -53,13 +70,13 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="COWORK.ARMY", version="6.0", lifespan=lifespan)
+app = FastAPI(title="COWORK.ARMY", version="7.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ══════════════ HEALTH ══════════════
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "6.0"}
+    return {"status": "ok", "version": "7.0"}
 
 # ══════════════ INFO ══════════════
 @app.get("/api/info")
@@ -67,7 +84,7 @@ async def api_info():
     db = get_db()
     agents = await db.get_all_agents()
     return {
-        "name": "COWORK.ARMY", "version": "6.0", "mode": "production",
+        "name": "COWORK.ARMY", "version": "7.0", "mode": "production",
         "agents": len(agents), "bridge_connected": False, "bridge_count": 0,
         "autonomous": autonomous.running, "autonomous_ticks": autonomous.tick_count,
     }
@@ -262,7 +279,7 @@ if __name__ == "__main__":
     import sys, io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     print("=" * 50)
-    print("  COWORK.ARMY v6.0 -- Command Center")
+    print("  COWORK.ARMY v7.0 -- Command Center")
     print("  http://localhost:8888")
     print("=" * 50)
     uvicorn.run(app, host="0.0.0.0", port=8888)

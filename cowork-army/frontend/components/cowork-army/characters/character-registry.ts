@@ -1,4 +1,4 @@
-// Character definitions for all 12 COWORK.ARMY agents
+// Character definitions for all 14 COWORK.ARMY v7 agents
 
 export type BodyShape = "standard" | "tall" | "wide" | "angular" | "dynamic";
 export type HeadShape = "sphere" | "box" | "octahedron" | "dodecahedron";
@@ -15,7 +15,19 @@ export type AccessoryType =
     | "flask"
     | "rocket_fins"
     | "laptop"
-    | "briefcase";
+    | "briefcase"
+    | "gamepad"
+    | "chart_screen"
+    | "terminal"
+    | "stethoscope"
+    | "globe"
+    | "gear"
+    | "key_card"
+    | "wrench"
+    | "monitor_stack"
+    | "phone"
+    | "brain"
+    | "package";
 
 export interface AccessoryDef {
     type: AccessoryType;
@@ -27,7 +39,7 @@ export interface CharacterDef {
     id: string;
     bodyShape: BodyShape;
     headShape: HeadShape;
-    bodyScale: [number, number, number]; // radiusTop/Bottom, height, segments mapped per shape
+    bodyScale: [number, number, number];
     headScale: number;
     accessories: AccessoryDef[];
     legStyle: "standard" | "wide_stance" | "guard_stance";
@@ -35,78 +47,41 @@ export interface CharacterDef {
 }
 
 export const CHARACTER_REGISTRY: Record<string, CharacterDef> = {
-    commander: {
-        id: "commander",
-        bodyShape: "tall",
-        headShape: "sphere",
-        bodyScale: [0.14, 0.5, 0.14],
+    // ═══ CARGO ═══
+    cargo: {
+        id: "cargo",
+        bodyShape: "wide",
+        headShape: "box",
+        bodyScale: [0.16, 0.35, 0.16],
         headScale: 1.1,
-        accessories: [{ type: "crown", position: [0, 0.52, 0], scale: 1 }],
-        legStyle: "standard",
+        accessories: [{ type: "package", position: [0, 0.5, 0], scale: 1 }],
+        legStyle: "wide_stance",
         emissiveIntensity: 0.3,
     },
-    supervisor: {
-        id: "supervisor",
-        bodyShape: "standard",
-        headShape: "box",
-        bodyScale: [0.12, 0.35, 0.12],
-        headScale: 1.0,
-        accessories: [{ type: "magnifying_glass", position: [0.2, 0.25, 0], scale: 0.8 }],
-        legStyle: "standard",
-        emissiveIntensity: 0.15,
-    },
-    "med-health": {
-        id: "med-health",
-        bodyShape: "standard",
-        headShape: "sphere",
-        bodyScale: [0.12, 0.35, 0.12],
-        headScale: 1.0,
-        accessories: [{ type: "medical_cross", position: [0, 0.18, 0.08], scale: 1 }],
-        legStyle: "standard",
-        emissiveIntensity: 0.2,
-    },
-    "travel-agent": {
-        id: "travel-agent",
-        bodyShape: "standard",
-        headShape: "sphere",
-        bodyScale: [0.12, 0.35, 0.12],
-        headScale: 1.0,
-        accessories: [{ type: "wings", position: [0, 0.2, -0.1], scale: 1 }],
-        legStyle: "standard",
-        emissiveIntensity: 0.2,
-    },
-    "trade-engine": {
-        id: "trade-engine",
-        bodyShape: "wide",
+
+    // ═══ TRADE DEPARTMENT ═══
+    "trade-master": {
+        id: "trade-master",
+        bodyShape: "tall",
         headShape: "dodecahedron",
-        bodyScale: [0.18, 0.35, 0.18],
+        bodyScale: [0.14, 0.5, 0.14],
         headScale: 1.2,
-        accessories: [{ type: "antenna", position: [0, 0.55, 0], scale: 1 }],
-        legStyle: "wide_stance",
+        accessories: [{ type: "chart_screen", position: [0, 0.55, 0], scale: 1 }],
+        legStyle: "standard",
         emissiveIntensity: 0.4,
     },
-    "alpha-scout": {
-        id: "alpha-scout",
+    "chart-eye": {
+        id: "chart-eye",
         bodyShape: "standard",
         headShape: "sphere",
         bodyScale: [0.12, 0.35, 0.12],
         headScale: 1.0,
         accessories: [{ type: "binoculars", position: [0, 0.38, 0.12], scale: 0.7 }],
         legStyle: "standard",
-        emissiveIntensity: 0.15,
-    },
-    "tech-analyst": {
-        id: "tech-analyst",
-        bodyShape: "angular",
-        headShape: "octahedron",
-        bodyScale: [0.2, 0.35, 0.2],
-        headScale: 1.0,
-        accessories: [{ type: "compass", position: [0.22, 0.3, 0], scale: 0.8 }],
-        legStyle: "standard",
         emissiveIntensity: 0.2,
     },
-    "risk-sentinel": {
-        id: "risk-sentinel",
+    "risk-guard": {
+        id: "risk-guard",
         bodyShape: "wide",
         headShape: "sphere",
         bodyScale: [0.16, 0.35, 0.16],
@@ -115,45 +90,101 @@ export const CHARACTER_REGISTRY: Record<string, CharacterDef> = {
         legStyle: "guard_stance",
         emissiveIntensity: 0.25,
     },
-    "quant-lab": {
-        id: "quant-lab",
+    "quant-brain": {
+        id: "quant-brain",
+        bodyShape: "angular",
+        headShape: "octahedron",
+        bodyScale: [0.2, 0.35, 0.2],
+        headScale: 1.0,
+        accessories: [{ type: "brain", position: [0, 0.52, 0], scale: 0.9 }],
+        legStyle: "standard",
+        emissiveIntensity: 0.3,
+    },
+
+    // ═══ MEDICAL DEPARTMENT ═══
+    "clinic-director": {
+        id: "clinic-director",
+        bodyShape: "tall",
+        headShape: "sphere",
+        bodyScale: [0.14, 0.45, 0.14],
+        headScale: 1.1,
+        accessories: [{ type: "stethoscope", position: [0, 0.2, 0.1], scale: 1 }],
+        legStyle: "standard",
+        emissiveIntensity: 0.25,
+    },
+    "patient-care": {
+        id: "patient-care",
         bodyShape: "standard",
         headShape: "sphere",
         bodyScale: [0.12, 0.35, 0.12],
         headScale: 1.0,
-        accessories: [{ type: "flask", position: [0.2, 0.2, 0], scale: 0.8 }],
+        accessories: [{ type: "medical_cross", position: [0, 0.18, 0.08], scale: 1 }],
+        legStyle: "standard",
+        emissiveIntensity: 0.2,
+    },
+
+    // ═══ HOTEL DEPARTMENT ═══
+    "hotel-manager": {
+        id: "hotel-manager",
+        bodyShape: "tall",
+        headShape: "sphere",
+        bodyScale: [0.14, 0.45, 0.14],
+        headScale: 1.1,
+        accessories: [{ type: "key_card", position: [0.22, 0.3, 0], scale: 0.9 }],
+        legStyle: "standard",
+        emissiveIntensity: 0.2,
+    },
+    "travel-planner": {
+        id: "travel-planner",
+        bodyShape: "standard",
+        headShape: "sphere",
+        bodyScale: [0.12, 0.35, 0.12],
+        headScale: 1.0,
+        accessories: [{ type: "globe", position: [0, 0.5, 0], scale: 0.8 }],
+        legStyle: "standard",
+        emissiveIntensity: 0.2,
+    },
+    concierge: {
+        id: "concierge",
+        bodyShape: "standard",
+        headShape: "sphere",
+        bodyScale: [0.12, 0.35, 0.12],
+        headScale: 1.0,
+        accessories: [{ type: "phone", position: [0.2, 0.25, 0], scale: 0.8 }],
         legStyle: "standard",
         emissiveIntensity: 0.15,
     },
-    "growth-ops": {
-        id: "growth-ops",
+
+    // ═══ SOFTWARE DEPARTMENT ═══
+    "tech-lead": {
+        id: "tech-lead",
+        bodyShape: "tall",
+        headShape: "box",
+        bodyScale: [0.14, 0.45, 0.14],
+        headScale: 1.1,
+        accessories: [{ type: "monitor_stack", position: [0, 0.18, 0.14], scale: 0.9 }],
+        legStyle: "standard",
+        emissiveIntensity: 0.3,
+    },
+    "full-stack": {
+        id: "full-stack",
         bodyShape: "dynamic",
         headShape: "sphere",
         bodyScale: [0.1, 0.4, 0.1],
         headScale: 1.0,
-        accessories: [{ type: "rocket_fins", position: [0, 0.05, -0.1], scale: 0.9 }],
+        accessories: [{ type: "terminal", position: [0, 0.12, 0.16], scale: 0.8 }],
         legStyle: "standard",
-        emissiveIntensity: 0.2,
+        emissiveIntensity: 0.25,
     },
-    "web-dev": {
-        id: "web-dev",
+    "data-ops": {
+        id: "data-ops",
         bodyShape: "standard",
-        headShape: "box",
+        headShape: "octahedron",
         bodyScale: [0.12, 0.35, 0.12],
         headScale: 1.0,
-        accessories: [{ type: "laptop", position: [0, 0.12, 0.16], scale: 0.8 }],
+        accessories: [{ type: "gear", position: [0.22, 0.3, 0], scale: 0.8 }],
         legStyle: "standard",
         emissiveIntensity: 0.2,
-    },
-    finance: {
-        id: "finance",
-        bodyShape: "standard",
-        headShape: "sphere",
-        bodyScale: [0.13, 0.33, 0.13],
-        headScale: 1.0,
-        accessories: [{ type: "briefcase", position: [0.2, 0.05, 0], scale: 0.8 }],
-        legStyle: "standard",
-        emissiveIntensity: 0.1,
     },
 };
 
@@ -171,7 +202,7 @@ const BODY_SHAPES: BodyShape[] = ["standard", "tall", "wide", "angular", "dynami
 const HEAD_SHAPES: HeadShape[] = ["sphere", "box", "octahedron", "dodecahedron"];
 const ACCESSORY_TYPES: AccessoryType[] = [
     "antenna", "compass", "flask", "laptop", "briefcase",
-    "binoculars", "rocket_fins", "shield",
+    "binoculars", "rocket_fins", "shield", "gear", "globe",
 ];
 const LEG_STYLES: ("standard" | "wide_stance" | "guard_stance")[] = [
     "standard", "wide_stance", "guard_stance",

@@ -9,6 +9,7 @@ import type { CoworkAgent, AgentStatus, CoworkTask, AutonomousEvent, AutonomousS
 import { getCoworkAgents, getAgentStatuses, getAutonomousEvents, getAutonomousStatus,
   getServerInfo, spawnAgent, killAgent, startAutonomousLoop, stopAutonomousLoop,
   createCoworkTask, createCoworkAgent, deleteCoworkAgent } from "@/lib/cowork-api";
+import { AGENT_DEPARTMENT, DEPT_COLORS } from "@/components/cowork-army/scene-constants";
 
 const CoworkOffice3D = dynamic(() => import("@/components/cowork-army/CoworkOffice3D"), { ssr: false });
 
@@ -63,7 +64,7 @@ export default function Home() {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-sm">👑</div>
           <div>
             <h1 className="text-xs font-extrabold tracking-[3px]">COWORK<span className="text-amber-400">.ARMY</span></h1>
-            <p className="text-[8px] text-gray-500 tracking-wider">v6 • {info?.agents ?? 0} AGENTS • POSTGRESQL • AUTONOMOUS</p>
+            <p className="text-[8px] text-gray-500 tracking-wider">v7 • {info?.agents ?? 0} AGENTS • 4 DEPTS • AUTONOMOUS</p>
           </div>
         </div>
         <div className="flex items-center gap-4 text-center">
@@ -92,23 +93,61 @@ export default function Home() {
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-1 space-y-0.5">
-            {agents.map(a => {
-              const st = statuses[a.id]?.status || "idle";
-              const isActive = ["working","thinking","coding","searching"].includes(st);
+            {/* Department-grouped agents */}
+            {(["cargo", "trade", "medical", "hotel", "software"] as const).map(dept => {
+              const deptAgents = agents.filter(a => AGENT_DEPARTMENT[a.id] === dept);
+              if (deptAgents.length === 0) return null;
+              const deptLabel = dept === "cargo" ? "📦 CARGO" : dept === "trade" ? "📊 TRADE" : dept === "medical" ? "🏥 MEDICAL" : dept === "hotel" ? "🏨 HOTEL" : "💻 SOFTWARE";
               return (
-                <button key={a.id} onClick={() => setSelected(a.id)}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-all text-[9px]
-                    ${selected === a.id ? "bg-indigo-500/10 border border-indigo-500/20" : "border border-transparent hover:bg-white/[0.02]"}
-                    ${isActive ? "border-l-2 !border-l-green-500" : ""}`}>
-                  <span className="text-sm flex-shrink-0">{a.icon}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold truncate" style={{ color: a.color }}>{a.name}</div>
-                    <div className="text-[6px] text-gray-500 tracking-wider">{a.tier}</div>
+                <div key={dept}>
+                  <div className="px-2 py-1 text-[6px] tracking-[2px] font-bold" style={{ color: DEPT_COLORS[dept] }}>
+                    {deptLabel}
                   </div>
-                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-green-500 pulse-dot" : st === "error" ? "bg-red-500" : "bg-gray-600"}`} />
-                </button>
+                  {deptAgents.map(a => {
+                    const st = statuses[a.id]?.status || "idle";
+                    const isActive = ["working","thinking","coding","searching","delivering"].includes(st);
+                    return (
+                      <button key={a.id} onClick={() => setSelected(a.id)}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-all text-[9px]
+                          ${selected === a.id ? "bg-indigo-500/10 border border-indigo-500/20" : "border border-transparent hover:bg-white/[0.02]"}
+                          ${isActive ? "border-l-2 !border-l-green-500" : ""}`}>
+                        <span className="text-sm flex-shrink-0">{a.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold truncate" style={{ color: a.color }}>{a.name}</div>
+                          <div className="text-[6px] text-gray-500 tracking-wider">{a.tier}</div>
+                        </div>
+                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-green-500 pulse-dot" : st === "error" ? "bg-red-500" : "bg-gray-600"}`} />
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
+            {/* Dynamic (unassigned) agents */}
+            {agents.filter(a => !AGENT_DEPARTMENT[a.id]).length > 0 && (
+              <div>
+                <div className="px-2 py-1 text-[6px] tracking-[2px] font-bold text-gray-500">
+                  DYNAMIC
+                </div>
+                {agents.filter(a => !AGENT_DEPARTMENT[a.id]).map(a => {
+                  const st = statuses[a.id]?.status || "idle";
+                  const isActive = ["working","thinking","coding","searching"].includes(st);
+                  return (
+                    <button key={a.id} onClick={() => setSelected(a.id)}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-all text-[9px]
+                        ${selected === a.id ? "bg-indigo-500/10 border border-indigo-500/20" : "border border-transparent hover:bg-white/[0.02]"}
+                        ${isActive ? "border-l-2 !border-l-green-500" : ""}`}>
+                      <span className="text-sm flex-shrink-0">{a.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold truncate" style={{ color: a.color }}>{a.name}</div>
+                        <div className="text-[6px] text-gray-500 tracking-wider">{a.tier}</div>
+                      </div>
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-green-500 pulse-dot" : st === "error" ? "bg-red-500" : "bg-gray-600"}`} />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </aside>
 

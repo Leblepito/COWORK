@@ -74,6 +74,10 @@ export default function AgentAvatar({
                     groupRef.current.position.set(position[0], position[1] + 0.8, position[2] - 0.3);
                     groupRef.current.rotation.y = t * 1;
                     break;
+                case "delivering":
+                    groupRef.current.position.set(position[0], position[1] + 0.8 + Math.abs(Math.sin(t * 3)) * 0.08, position[2] - 0.3);
+                    groupRef.current.rotation.y = t * 2;
+                    break;
                 case "error":
                     errorFlashRef.current += 1;
                     groupRef.current.position.set(position[0], position[1] + 0.8, position[2] - 0.3);
