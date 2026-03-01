@@ -103,3 +103,77 @@ export const getAutonomousEvents = (limit = 50, since = "") =>
 
 // ── Server Info ──
 export const getServerInfo = () => coworkFetch<ServerInfo>("/info");
+
+// ── Commander ──
+export async function commanderDelegate(
+  title: string, description: string, priority: string, autoSpawn: boolean
+): Promise<Record<string, unknown>> {
+  const fd = new FormData();
+  fd.append("title", title);
+  fd.append("description", description);
+  fd.append("priority", priority);
+  fd.append("auto_spawn", String(autoSpawn));
+  const res = await fetch(`${BASE}/commander/delegate`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+// ── Settings ──
+export interface ApiKeyStatus {
+  set: boolean;
+  preview: string;
+  active_provider: string;
+  anthropic: { set: boolean; preview: string };
+  gemini: { set: boolean; preview: string };
+}
+export const getApiKeyStatus = () => coworkFetch<ApiKeyStatus>("/settings/api-key-status");
+export async function saveApiKey(key: string, provider: string = "anthropic"): Promise<{ status: string; provider: string; preview: string }> {
+  const fd = new FormData();
+  fd.append("key", key);
+  fd.append("provider", provider);
+  const res = await fetch(`${BASE}/settings/api-key`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+export const getLlmProvider = () => coworkFetch<{ provider: string }>("/settings/llm-provider");
+export async function setLlmProvider(provider: string): Promise<{ status: string; provider: string }> {
+  const fd = new FormData();
+  fd.append("provider", provider);
+  const res = await fetch(`${BASE}/settings/llm-provider`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+// ── Agent CRUD (object-based interface) ──
+export interface CreateAgentInput {
+  id?: string; name: string; icon: string; tier: string; color: string;
+  domain: string; desc: string; skills: string[]; rules: string[];
+  workspace_dir: string; triggers: string[]; system_prompt: string;
+}
+export async function createAgent(input: CreateAgentInput): Promise<CoworkAgent> {
+  const fd = new FormData();
+  if (input.id) fd.append("id", input.id);
+  fd.append("agent_id", input.id || `agent-${Date.now()}`);
+  fd.append("name", input.name);
+  fd.append("icon", input.icon);
+  fd.append("domain", input.domain);
+  fd.append("desc", input.desc);
+  fd.append("skills", JSON.stringify(input.skills));
+  fd.append("rules", JSON.stringify(input.rules));
+  fd.append("triggers", JSON.stringify(input.triggers));
+  fd.append("system_prompt", input.system_prompt);
+  const res = await fetch(`${BASE}/agents`, { method: "POST", body: fd });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+  return res.json() as Promise<CoworkAgent>;
+}
+export async function deleteAgent(id: string): Promise<{ deleted?: boolean; status?: string; agent_id?: string }> {
+  const res = await fetch(`${BASE}/agents/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+  return res.json();
+}

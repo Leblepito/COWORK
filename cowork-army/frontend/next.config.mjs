@@ -1,8 +1,7 @@
-import type { NextConfig } from "next";
-
 const coworkUrl = process.env.COWORK_API_URL || "http://localhost:8888";
 
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
     output: "standalone",
     async rewrites() {
         return [

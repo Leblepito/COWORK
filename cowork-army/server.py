@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-COWORK.ARMY — Server v5 (PostgreSQL + async)
+COWORK.ARMY — Server v7 (PostgreSQL + async)
 FastAPI backend matching CLAUDE.md spec exactly.
 """
 import asyncio
@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import setup_db, get_db
 from database.connection import set_event_loop
+from database.models import Agent
+from sqlalchemy import select, delete
 from registry import BASE_AGENTS
 from runner import spawn_agent, kill_agent, get_statuses, get_output
 from commander import delegate_task, create_dynamic_agent
@@ -36,6 +38,21 @@ async def lifespan(app):
     # Seed base agents
     await db.seed_base_agents(BASE_AGENTS)
 
+    # Cleanup old base agents not in new registry
+    new_ids = {a["id"] for a in BASE_AGENTS}
+    async with db._sf() as session:
+        result = await session.execute(
+            select(Agent.id).where(Agent.is_base == True)
+        )
+        existing_base_ids = {row[0] for row in result.all()}
+        stale_ids = existing_base_ids - new_ids
+        if stale_ids:
+            await session.execute(
+                delete(Agent).where(Agent.id.in_(stale_ids))
+            )
+            await session.commit()
+            logger.info(f"Removed {len(stale_ids)} old base agents: {stale_ids}")
+
     # Setup workspace directories
     agents = await db.get_all_agents()
     for a in agents:
@@ -53,8 +70,13 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="COWORK.ARMY", version="5.0", lifespan=lifespan)
+app = FastAPI(title="COWORK.ARMY", version="7.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# ══════════════ HEALTH ══════════════
+@app.get("/health")
+async def health():
+    return {"status": "ok", "version": "7.0"}
 
 # ══════════════ INFO ══════════════
 @app.get("/api/info")
@@ -62,7 +84,7 @@ async def api_info():
     db = get_db()
     agents = await db.get_all_agents()
     return {
-        "name": "COWORK.ARMY", "version": "5.0", "mode": "production",
+        "name": "COWORK.ARMY", "version": "7.0", "mode": "production",
         "agents": len(agents), "bridge_connected": False, "bridge_count": 0,
         "autonomous": autonomous.running, "autonomous_ticks": autonomous.tick_count,
     }
@@ -146,6 +168,22 @@ async def api_create_task(title: str = Form(...), description: str = Form(""),
         return await db.create_task(tid, title, description, assigned_to, priority, "user", "pending", [])
     return await delegate_task(title, description, priority)
 
+@app.put("/api/tasks/{task_id}")
+async def api_update_task(task_id: str, status: str = Form(""), log_message: str = Form("")):
+    db = get_db()
+    task = await db.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "task not found"}, 404)
+    updates = {}
+    if status:
+        updates["status"] = status
+    if log_message:
+        current_log = task.get("log", [])
+        updates["log"] = current_log + [log_message]
+    if updates:
+        await db.update_task(task_id, **updates)
+    return await db.get_task(task_id)
+
 # ══════════════ COMMANDER ══════════════
 @app.post("/api/commander/delegate")
 async def api_delegate(title: str = Form(...), description: str = Form(""), priority: str = Form("normal")):
@@ -172,27 +210,77 @@ async def api_auto_events(limit: int = 50, since: str = ""):
     return await db.get_events(limit, since)
 
 # ══════════════ SETTINGS ══════════════
+
+def _read_env_file() -> dict[str, str]:
+    """Read all key=value pairs from .env file."""
+    env = BASE / ".env"
+    result = {}
+    if env.exists():
+        for line in env.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                result[k.strip()] = v.strip().strip('"')
+    return result
+
+def _write_env_file(updates: dict[str, str]):
+    """Update .env file with given key=value pairs, preserving other lines."""
+    env = BASE / ".env"
+    existing = {}
+    other_lines = []
+    if env.exists():
+        for line in env.read_text().splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                k = stripped.split("=", 1)[0].strip()
+                existing[k] = line
+            else:
+                other_lines.append(line)
+    for k, v in updates.items():
+        existing[k] = f"{k}={v}"
+        os.environ[k] = v
+    all_lines = other_lines + list(existing.values())
+    env.write_text("\n".join(all_lines) + "\n")
+
+def _get_env_value(key: str) -> str:
+    v = os.environ.get(key, "")
+    if not v:
+        v = _read_env_file().get(key, "")
+    return v
+
 @app.get("/api/settings/api-key-status")
 async def api_key_status():
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not key:
-        env = BASE / ".env"
-        if env.exists():
-            for line in env.read_text().splitlines():
-                if line.startswith("ANTHROPIC_API_KEY=") and line.split("=", 1)[1].strip():
-                    key = line.split("=", 1)[1].strip()
-    return {"set": bool(key), "preview": (key[:12] + "...") if key else ""}
+    anthropic_key = _get_env_value("ANTHROPIC_API_KEY")
+    google_key = _get_env_value("GOOGLE_API_KEY")
+    active_provider = _get_env_value("LLM_PROVIDER") or "anthropic"
+    return {
+        "set": bool(anthropic_key) if active_provider == "anthropic" else bool(google_key),
+        "preview": (anthropic_key[:12] + "...") if anthropic_key else "",
+        "active_provider": active_provider,
+        "anthropic": {"set": bool(anthropic_key), "preview": (anthropic_key[:12] + "...") if anthropic_key else ""},
+        "gemini": {"set": bool(google_key), "preview": (google_key[:12] + "...") if google_key else ""},
+    }
 
 @app.post("/api/settings/api-key")
-async def api_set_key(key: str = Form(...)):
-    env = BASE / ".env"
-    lines = []
-    if env.exists():
-        lines = [l for l in env.read_text().splitlines() if not l.startswith("ANTHROPIC_API_KEY=")]
-    lines.append(f"ANTHROPIC_API_KEY={key}")
-    env.write_text("\n".join(lines) + "\n")
-    os.environ["ANTHROPIC_API_KEY"] = key
-    return {"status": "saved", "preview": key[:12] + "..."}
+async def api_set_key(key: str = Form(...), provider: str = Form("anthropic")):
+    if provider == "gemini":
+        env_key = "GOOGLE_API_KEY"
+    else:
+        env_key = "ANTHROPIC_API_KEY"
+    _write_env_file({env_key: key})
+    return {"status": "saved", "provider": provider, "preview": key[:12] + "..."}
+
+@app.get("/api/settings/llm-provider")
+async def api_get_provider():
+    provider = _get_env_value("LLM_PROVIDER") or "anthropic"
+    return {"provider": provider}
+
+@app.post("/api/settings/llm-provider")
+async def api_set_provider(provider: str = Form(...)):
+    if provider not in ("anthropic", "gemini"):
+        return JSONResponse({"error": "Invalid provider. Use 'anthropic' or 'gemini'."}, 400)
+    _write_env_file({"LLM_PROVIDER": provider})
+    return {"status": "saved", "provider": provider}
 
 # ══════════════ WORKSPACE ══════════════
 @app.get("/api/workspace/{agent_id}")
@@ -241,7 +329,7 @@ if __name__ == "__main__":
     import sys, io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     print("=" * 50)
-    print("  COWORK.ARMY v6.0 -- Command Center")
+    print("  COWORK.ARMY v7.0 -- Command Center")
     print("  http://localhost:8888")
     print("=" * 50)
     uvicorn.run(app, host="0.0.0.0", port=8888)

@@ -1,219 +1,378 @@
 """
-Tests for runner.py — Agent Lifecycle (HIGH)
-Spawn/kill lifecycle, status management, output buffer, helpers.
+Tests for runner.py — Agent Lifecycle & Tool Use Integration
+AgentProc state, spawn/kill, output buffer, tool execution, Claude API loop.
 """
+import json
 import asyncio
-from collections import deque
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
-
-from runner import AgentProcess, AgentRunner, OUTPUT_BUFFER_SIZE
-
-
-# ── Fixtures ─────────────────────────────────────────────
-
-@pytest.fixture
-def mock_db(seeded_db):
-    """Use the seeded database."""
-    return seeded_db
+from unittest.mock import patch, MagicMock, AsyncMock
+from runner import AgentProc, PROCS, CLAUDE_TOOLS, _execute_tool
 
 
-@pytest.fixture
-def event_log():
-    """Collects event callbacks."""
-    log = []
-    def cb(agent_id, message, etype):
-        log.append((agent_id, message, etype))
-    return log, cb
-
-
-@pytest.fixture
-def runner(mock_db, event_log, tmp_path):
-    """Create an AgentRunner with mocked DB."""
-    log, cb = event_log
-    return AgentRunner(
-        cowork_root=str(tmp_path),
-        anthropic_api_key="",  # No real API key
-        event_callback=cb,
-        db=mock_db,
-    )
-
-
-# ═══════════════════════════════════════════════════════════
-#  AGENT PROCESS
-# ═══════════════════════════════════════════════════════════
-
-class TestAgentProcess:
-    """Test AgentProcess state container."""
-
+class TestAgentProc:
     def test_initial_state(self):
-        proc = AgentProcess("test-agent")
+        proc = AgentProc("test-agent")
         assert proc.agent_id == "test-agent"
         assert proc.status == "idle"
         assert proc.alive is False
-        assert proc.started_at is None
-        assert proc.task_description is None
+        assert proc.started_at == ""
 
-    def test_output_buffer_is_deque(self):
-        proc = AgentProcess("test")
-        assert isinstance(proc.output_buffer, deque)
-        assert proc.output_buffer.maxlen == OUTPUT_BUFFER_SIZE
+    def test_log_appends(self):
+        proc = AgentProc("test")
+        proc.log("message 1")
+        proc.log("message 2")
+        assert len(proc.lines) == 2
 
-    def test_output_buffer_max_size(self):
-        proc = AgentProcess("test")
-        for i in range(OUTPUT_BUFFER_SIZE + 100):
-            proc.output_buffer.append(f"line {i}")
-        assert len(proc.output_buffer) == OUTPUT_BUFFER_SIZE
+    def test_log_max_200_lines(self):
+        proc = AgentProc("test")
+        for i in range(250):
+            proc.log(f"line {i}")
+        assert len(proc.lines) == 200
 
+    def test_to_dict(self):
+        proc = AgentProc("test")
+        proc.status = "working"
+        d = proc.to_dict()
+        assert d["agent_id"] == "test"
+        assert d["status"] == "working"
+        assert d["alive"] is False
+        assert "lines" in d
 
-# ═══════════════════════════════════════════════════════════
-#  AGENT RUNNER INIT
-# ═══════════════════════════════════════════════════════════
-
-class TestAgentRunnerInit:
-    """Test runner initialization and process management."""
-
-    def test_processes_created_for_all_agents(self, runner, mock_db):
-        agents = mock_db.get_all_agents()
-        for agent in agents:
-            assert agent["id"] in runner.processes
-
-    def test_ensure_process_new_agent(self, runner):
-        proc = runner.ensure_process("new-dynamic-agent")
-        assert proc.agent_id == "new-dynamic-agent"
-        assert "new-dynamic-agent" in runner.processes
-
-    def test_ensure_process_existing(self, runner):
-        proc1 = runner.ensure_process("commander")
-        proc2 = runner.ensure_process("commander")
-        assert proc1 is proc2
+    def test_to_dict_lines_capped_at_50(self):
+        proc = AgentProc("test")
+        for i in range(100):
+            proc.log(f"line {i}")
+        d = proc.to_dict()
+        assert len(d["lines"]) == 50
 
 
-# ═══════════════════════════════════════════════════════════
-#  SPAWN / KILL
-# ═══════════════════════════════════════════════════════════
+class TestGetOutput:
+    def test_get_output_empty(self):
+        from runner import get_output
+        assert get_output("nonexistent") == []
 
-class TestSpawnKill:
-    """Test spawn and kill lifecycle."""
+    def test_get_output_existing(self):
+        from runner import get_output
+        proc = AgentProc("out-test")
+        proc.log("test line")
+        PROCS["out-test"] = proc
+        assert len(get_output("out-test")) == 1
+        del PROCS["out-test"]
 
-    @pytest.mark.asyncio
-    async def test_spawn_unknown_agent(self, runner):
-        result = await runner.spawn("nonexistent-agent")
-        assert result.get("error") == "unknown agent"
 
-    @pytest.mark.asyncio
-    async def test_spawn_no_api_key(self, runner):
-        """Spawn without API key should set error status."""
-        result = await runner.spawn("web-dev", "test task")
-        # The task is created, wait briefly for it to run
-        await asyncio.sleep(0.1)
-        proc = runner.processes["web-dev"]
-        # Should have errored because no API key
-        assert proc.status == "error"
-        assert proc.alive is False
+class TestKillAgent:
+    def test_kill_not_running(self):
+        from runner import kill_agent
+        result = kill_agent("nonexistent")
+        assert "error" in result
 
-    @pytest.mark.asyncio
-    async def test_spawn_sets_initial_state(self, runner):
-        # Patch _run_agent to not actually call API
-        with patch.object(runner, '_run_agent', new_callable=AsyncMock):
-            result = await runner.spawn("web-dev", "build the frontend")
-            assert result["agent_id"] == "web-dev"
-            assert result["alive"] is True
-            assert result["status"] == "thinking"
-
-    @pytest.mark.asyncio
-    async def test_spawn_already_alive_returns_status(self, runner):
-        with patch.object(runner, '_run_agent', new_callable=AsyncMock):
-            await runner.spawn("web-dev", "task 1")
-            result = await runner.spawn("web-dev", "task 2")
-            # Should return current status, not spawn again
-            assert result["alive"] is True
-
-    @pytest.mark.asyncio
-    async def test_kill_running_agent(self, runner):
-        async def slow_task(agent_id, proc):
-            await asyncio.sleep(10)
-
-        with patch.object(runner, '_run_agent', side_effect=slow_task):
-            await runner.spawn("web-dev", "long task")
-            result = await runner.kill("web-dev")
-            assert result["status"] == "killed"
-
-    @pytest.mark.asyncio
-    async def test_kill_unknown_agent(self, runner):
-        result = await runner.kill("nonexistent")
-        assert result["status"] == "error"
-
-    @pytest.mark.asyncio
-    async def test_kill_idle_agent(self, runner):
-        result = await runner.kill("web-dev")
+    def test_kill_sets_done(self):
+        from runner import kill_agent
+        proc = AgentProc("kill-test")
+        proc.status = "working"
+        PROCS["kill-test"] = proc
+        result = kill_agent("kill-test")
         assert result["status"] == "killed"
+        assert proc.status == "done"
+        del PROCS["kill-test"]
 
 
 # ═══════════════════════════════════════════════════════════
-#  STATUS & OUTPUT
+#  CLAUDE TOOLS SCHEMA
 # ═══════════════════════════════════════════════════════════
 
-class TestStatusOutput:
-    """Test status retrieval and output."""
+class TestClaudeTools:
+    def test_five_tools_defined(self):
+        assert len(CLAUDE_TOOLS) == 5
 
-    def test_get_status_existing(self, runner):
-        status = runner.get_status("web-dev")
-        assert status["agent_id"] == "web-dev"
-        assert status["status"] == "idle"
+    def test_all_have_required_fields(self):
+        for tool in CLAUDE_TOOLS:
+            assert "name" in tool
+            assert "description" in tool
+            assert "input_schema" in tool
+            assert tool["input_schema"]["type"] == "object"
+            assert "properties" in tool["input_schema"]
 
-    def test_get_status_unknown(self, runner):
-        assert runner.get_status("nonexistent") == {}
+    def test_tool_names(self):
+        names = [t["name"] for t in CLAUDE_TOOLS]
+        assert "read_file" in names
+        assert "write_file" in names
+        assert "list_dir" in names
+        assert "search_files" in names
+        assert "run_command" in names
 
-    def test_get_all_statuses(self, runner, mock_db):
-        statuses = runner.get_all_statuses()
-        agents = mock_db.get_all_agents()
-        assert len(statuses) == len(agents)
+    def test_read_file_requires_path(self):
+        tool = next(t for t in CLAUDE_TOOLS if t["name"] == "read_file")
+        assert "path" in tool["input_schema"]["properties"]
+        assert "path" in tool["input_schema"]["required"]
 
-    def test_get_output_empty(self, runner):
-        output = runner.get_output("web-dev")
-        assert output == []
-
-    def test_get_output_returns_last_lines(self, runner):
-        proc = runner.processes["web-dev"]
-        for i in range(20):
-            proc.output_buffer.append(f"Line {i}")
-        output = runner.get_output("web-dev")
-        assert len(output) == 20
-
-    def test_get_output_unknown(self, runner):
-        assert runner.get_output("nonexistent") == []
+    def test_write_file_requires_path_and_content(self):
+        tool = next(t for t in CLAUDE_TOOLS if t["name"] == "write_file")
+        assert "path" in tool["input_schema"]["required"]
+        assert "content" in tool["input_schema"]["required"]
 
 
 # ═══════════════════════════════════════════════════════════
-#  STATUS INFERENCE
+#  TOOL EXECUTION (_execute_tool)
 # ═══════════════════════════════════════════════════════════
 
-class TestStatusInference:
-    """Test _infer_status and _tool_status helpers."""
+class TestExecuteTool:
+    def test_read_file(self):
+        with patch("runner.read_file", return_value={"content": "hello", "path": "test.txt"}):
+            result = _execute_tool("agent1", "read_file", {"path": "test.txt"})
+            data = json.loads(result)
+            assert data["content"] == "hello"
 
-    @pytest.mark.parametrize("text,expected", [
-        ("Projeyi analiz ediyorum", "thinking"),
-        ("Düşünüyorum nasıl yapılacak", "thinking"),
-        ("Plan hazırlıyorum", "planning"),
-        ("Strateji belirleniyor", "planning"),
-        ("Kodu yazıyorum", "coding"),
-        ("Implement ediyorum", "coding"),
-        ("Dosyaları ara ve tara", "searching"),
-        ("Hata bul ve search yap", "searching"),
-        ("İşlem devam ediyor", "working"),
-    ])
-    def test_infer_status(self, text, expected):
-        assert AgentRunner._infer_status(text) == expected
+    def test_write_file(self):
+        with patch("runner.write_file", return_value={"status": "written", "path": "out.txt"}):
+            result = _execute_tool("agent1", "write_file", {"path": "out.txt", "content": "data"})
+            data = json.loads(result)
+            assert data["status"] == "written"
 
-    @pytest.mark.parametrize("tool,expected", [
-        ("read_file", "searching"),
-        ("write_file", "coding"),
-        ("list_directory", "searching"),
-        ("search_code", "searching"),
-        ("run_command", "working"),
-        ("unknown", "working"),
-    ])
-    def test_tool_status(self, tool, expected):
-        assert AgentRunner._tool_status(tool) == expected
+    def test_list_dir(self):
+        with patch("runner.list_dir", return_value={"files": ["a.py", "b.py"]}):
+            result = _execute_tool("agent1", "list_dir", {"path": "."})
+            data = json.loads(result)
+            assert "files" in data
+            assert len(data["files"]) == 2
+
+    def test_list_dir_default_path(self):
+        with patch("runner.list_dir", return_value={"files": []}) as mock_ld:
+            _execute_tool("agent1", "list_dir", {})
+            mock_ld.assert_called_once_with("agent1", "")
+
+    def test_search_files(self):
+        with patch("runner.search_files", return_value={"matches": ["test.py"]}):
+            result = _execute_tool("agent1", "search_files", {"pattern": "*.py"})
+            data = json.loads(result)
+            assert "matches" in data
+
+    def test_run_command(self):
+        with patch("runner.run_command", return_value={"stdout": "hello\n", "returncode": 0}):
+            result = _execute_tool("agent1", "run_command", {"command": "echo hello"})
+            data = json.loads(result)
+            assert data["returncode"] == 0
+
+    def test_unknown_tool_returns_error(self):
+        result = _execute_tool("agent1", "nonexistent_tool", {})
+        data = json.loads(result)
+        assert "error" in data
+        assert "Unknown tool" in data["error"]
+
+    def test_exception_returns_error(self):
+        with patch("runner.read_file", side_effect=FileNotFoundError("No such file")):
+            result = _execute_tool("agent1", "read_file", {"path": "missing.txt"})
+            data = json.loads(result)
+            assert "error" in data
+            assert "No such file" in data["error"]
+
+
+# ═══════════════════════════════════════════════════════════
+#  TOOL USE LOOP (_run with mocked Claude API)
+# ═══════════════════════════════════════════════════════════
+
+def _sync_db_for_test(coro):
+    """Replacement for _sync_db that works in test context."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+def _make_agent_data(agent_id="test-agent"):
+    return {
+        "id": agent_id, "name": "Test Agent", "icon": "🤖",
+        "system_prompt": "You are a test agent.", "desc": "Test agent",
+        "domain": "testing", "workspace_dir": agent_id,
+    }
+
+
+def _make_text_block(text):
+    block = MagicMock()
+    block.type = "text"
+    block.text = text
+    return block
+
+
+def _make_tool_use_block(name, tool_input, tool_id="tool-1"):
+    block = MagicMock()
+    block.type = "tool_use"
+    block.name = name
+    block.input = tool_input
+    block.id = tool_id
+    return block
+
+
+class TestToolUseRun:
+    def test_simple_response_no_tools(self):
+        """Claude returns text only — no tool calls, task completes."""
+        from runner import _run
+        proc = AgentProc("test-simple")
+
+        response = MagicMock()
+        response.content = [_make_text_block("Task done.")]
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = response
+
+        mock_db = AsyncMock()
+        mock_db.get_agent.return_value = _make_agent_data("test-simple")
+        mock_db.add_event.return_value = None
+
+        with patch("runner.get_db", return_value=mock_db), \
+             patch("runner._get_api_key", return_value="sk-test-key"), \
+             patch("runner.Anthropic", return_value=mock_client), \
+             patch("runner._save_output"), \
+             patch("runner._sync_db", side_effect=_sync_db_for_test):
+            _run(proc, "Simple task")
+
+        assert proc.status == "done"
+        mock_client.messages.create.assert_called_once()
+
+    def test_tool_use_round_then_done(self):
+        """Claude calls a tool, gets result, then responds with text."""
+        from runner import _run
+        proc = AgentProc("test-tools")
+
+        # Round 1: tool_use
+        resp1 = MagicMock()
+        resp1.content = [
+            _make_text_block("Let me read that file."),
+            _make_tool_use_block("read_file", {"path": "test.txt"}, "call-1"),
+        ]
+
+        # Round 2: text only (done)
+        resp2 = MagicMock()
+        resp2.content = [_make_text_block("File contains: hello world.")]
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [resp1, resp2]
+
+        mock_db = AsyncMock()
+        mock_db.get_agent.return_value = _make_agent_data("test-tools")
+        mock_db.add_event.return_value = None
+
+        with patch("runner.get_db", return_value=mock_db), \
+             patch("runner._get_api_key", return_value="sk-test"), \
+             patch("runner.Anthropic", return_value=mock_client), \
+             patch("runner.read_file", return_value={"content": "hello world"}), \
+             patch("runner._save_output"), \
+             patch("runner._sync_db", side_effect=_sync_db_for_test):
+            _run(proc, "Read test.txt")
+
+        assert proc.status == "done"
+        assert mock_client.messages.create.call_count == 2
+
+    def test_multiple_tool_calls_in_one_response(self):
+        """Claude returns multiple tool_use blocks in a single response."""
+        from runner import _run
+        proc = AgentProc("test-multi")
+
+        # Round 1: two tool calls
+        resp1 = MagicMock()
+        resp1.content = [
+            _make_tool_use_block("read_file", {"path": "a.txt"}, "call-1"),
+            _make_tool_use_block("list_dir", {"path": "."}, "call-2"),
+        ]
+
+        # Round 2: done
+        resp2 = MagicMock()
+        resp2.content = [_make_text_block("All done.")]
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [resp1, resp2]
+
+        mock_db = AsyncMock()
+        mock_db.get_agent.return_value = _make_agent_data("test-multi")
+        mock_db.add_event.return_value = None
+
+        with patch("runner.get_db", return_value=mock_db), \
+             patch("runner._get_api_key", return_value="sk-test"), \
+             patch("runner.Anthropic", return_value=mock_client), \
+             patch("runner.read_file", return_value={"content": "aaa"}), \
+             patch("runner.list_dir", return_value={"files": ["a.txt"]}), \
+             patch("runner._save_output"), \
+             patch("runner._sync_db", side_effect=_sync_db_for_test):
+            _run(proc, "Read and list")
+
+        assert proc.status == "done"
+        assert mock_client.messages.create.call_count == 2
+
+    def test_api_key_missing(self):
+        """Missing API key should set error status."""
+        from runner import _run
+        proc = AgentProc("test-nokey")
+
+        mock_db = AsyncMock()
+        mock_db.get_agent.return_value = _make_agent_data("test-nokey")
+
+        with patch("runner.get_db", return_value=mock_db), \
+             patch("runner._get_api_key", return_value=""), \
+             patch("runner._sync_db", side_effect=_sync_db_for_test):
+            _run(proc, "Any task")
+
+        assert proc.status == "error"
+        assert any("API" in line or "api" in line.lower() for line in proc.lines)
+
+    def test_agent_not_found(self):
+        """Unknown agent should set error status."""
+        from runner import _run
+        proc = AgentProc("nonexistent")
+
+        mock_db = AsyncMock()
+        mock_db.get_agent.return_value = None
+
+        with patch("runner.get_db", return_value=mock_db), \
+             patch("runner._sync_db", side_effect=_sync_db_for_test):
+            _run(proc, "Task")
+
+        assert proc.status == "error"
+        assert any("not found" in line.lower() for line in proc.lines)
+
+    def test_claude_api_exception(self):
+        """Claude API error should set error status."""
+        from runner import _run
+        proc = AgentProc("test-apierr")
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = Exception("API rate limit exceeded")
+
+        mock_db = AsyncMock()
+        mock_db.get_agent.return_value = _make_agent_data("test-apierr")
+        mock_db.add_event.return_value = None
+
+        with patch("runner.get_db", return_value=mock_db), \
+             patch("runner._get_api_key", return_value="sk-test"), \
+             patch("runner.Anthropic", return_value=mock_client), \
+             patch("runner._sync_db", side_effect=_sync_db_for_test):
+            _run(proc, "Will fail")
+
+        assert proc.status == "error"
+        assert any("rate limit" in line.lower() for line in proc.lines)
+
+    def test_tools_passed_to_claude(self):
+        """Verify CLAUDE_TOOLS are passed to the API call."""
+        from runner import _run
+        proc = AgentProc("test-toolpass")
+
+        response = MagicMock()
+        response.content = [_make_text_block("Done.")]
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = response
+
+        mock_db = AsyncMock()
+        mock_db.get_agent.return_value = _make_agent_data("test-toolpass")
+        mock_db.add_event.return_value = None
+
+        with patch("runner.get_db", return_value=mock_db), \
+             patch("runner._get_api_key", return_value="sk-test"), \
+             patch("runner.Anthropic", return_value=mock_client), \
+             patch("runner._save_output"), \
+             patch("runner._sync_db", side_effect=_sync_db_for_test):
+            _run(proc, "Check tools")
+
+        call_kwargs = mock_client.messages.create.call_args
+        assert call_kwargs.kwargs.get("tools") == CLAUDE_TOOLS or \
+               (len(call_kwargs.args) == 0 and "tools" in call_kwargs.kwargs)

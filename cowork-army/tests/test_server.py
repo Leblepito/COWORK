@@ -1,359 +1,270 @@
 """
-Tests for server.py — API Endpoints (HIGH)
-Full integration tests using FastAPI TestClient via httpx.
+Tests for server.py — API Endpoints
+FastAPI TestClient with mocked database and dependencies.
 """
-import json
-import os
-from contextlib import asynccontextmanager
-from unittest.mock import patch
-
 import pytest
-from httpx import ASGITransport, AsyncClient
-
-from database import Database
-from registry import get_base_agents_as_dicts
-from runner import AgentRunner
-from autonomous import AutonomousLoop
-from commander import CommanderRouter
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.fixture
-async def client(tmp_path):
-    """Create async client with properly initialized server globals."""
-    db_path = str(tmp_path / "test.db")
-    cowork_root = str(tmp_path)
+def mock_db():
+    db = AsyncMock()
+    db.get_all_agents.return_value = []
+    db.seed_base_agents.return_value = None
+    db.list_tasks.return_value = []
+    db.get_events.return_value = []
+    return db
 
-    # Initialize database
-    test_db = Database(db_path)
-    test_db.initialize()
-    test_db.seed_base_agents(get_base_agents_as_dicts())
 
-    # Initialize components
-    test_commander = CommanderRouter(test_db)
+@pytest.fixture
+def mock_auto():
+    auto = MagicMock()
+    auto.running = False
+    auto.tick_count = 0
+    auto.start = AsyncMock()
+    auto.stop = AsyncMock()
+    auto.status = AsyncMock(return_value={
+        "running": False, "tick_count": 0,
+        "total_events": 0, "agents_tracked": 0, "last_tick": None,
+    })
+    return auto
 
-    def event_cb(agent_id, message, etype):
-        pass
 
-    test_runner = AgentRunner(
-        cowork_root=cowork_root,
-        anthropic_api_key="",
-        event_callback=event_cb,
-        db=test_db,
-    )
-    test_auto_loop = AutonomousLoop(runner=test_runner, db=test_db)
-
-    # Patch server module globals
-    import server as srv
-    original_db = srv.db
-    original_runner = srv.runner
-    original_commander = srv.commander_router
-    original_auto_loop = srv.auto_loop
-    original_root = srv.COWORK_ROOT
-    original_api_key = srv.API_KEY
-
-    srv.db = test_db
-    srv.runner = test_runner
-    srv.commander_router = test_commander
-    srv.auto_loop = test_auto_loop
-    srv.COWORK_ROOT = cowork_root
-    srv.API_KEY = ""
-
-    transport = ASGITransport(app=srv.app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
-
-    # Restore
-    test_auto_loop.stop()
-    srv.db = original_db
-    srv.runner = original_runner
-    srv.commander_router = original_commander
-    srv.auto_loop = original_auto_loop
-    srv.COWORK_ROOT = original_root
-    srv.API_KEY = original_api_key
+@pytest.fixture
+def app_client(mock_db, mock_auto):
+    """Create a TestClient with all server dependencies mocked."""
+    with patch("server.setup_db", new_callable=AsyncMock, return_value=mock_db), \
+         patch("server.get_db", return_value=mock_db), \
+         patch("server.set_event_loop"), \
+         patch("server.autonomous", mock_auto), \
+         patch("server.spawn_agent", new_callable=AsyncMock,
+               return_value={"status": "thinking", "agent_id": "test", "lines": [], "alive": True, "pid": 0, "started_at": ""}), \
+         patch("server.kill_agent", return_value={"status": "killed", "agent_id": "test"}), \
+         patch("server.get_statuses", new_callable=AsyncMock, return_value={}), \
+         patch("server.get_output", return_value=[]), \
+         patch("server.delegate_task", new_callable=AsyncMock,
+               return_value={"id": "TASK-MOCK01", "title": "test", "assigned_to": "commander", "status": "pending"}), \
+         patch("server.create_dynamic_agent", new_callable=AsyncMock,
+               return_value={"status": "created", "agent_id": "new-agent", "workspace": "/tmp/ws"}):
+        from server import app
+        from fastapi.testclient import TestClient
+        with TestClient(app) as c:
+            yield c, mock_db, mock_auto
 
 
 # ═══════════════════════════════════════════════════════════
 #  HEALTH & INFO
 # ═══════════════════════════════════════════════════════════
 
-class TestHealthInfo:
-    @pytest.mark.asyncio
-    async def test_health(self, client):
-        resp = await client.get("/health")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "ok"
+class TestHealth:
+    def test_returns_ok(self, app_client):
+        c, _, _ = app_client
+        r = c.get("/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
+        assert r.json()["version"] == "6.0"
 
-    @pytest.mark.asyncio
-    async def test_info(self, client):
-        resp = await client.get("/api/info")
-        assert resp.status_code == 200
-        data = resp.json()
+
+class TestInfo:
+    def test_returns_server_info(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.get_all_agents.return_value = [{"id": "a"}, {"id": "b"}]
+        r = c.get("/api/info")
+        assert r.status_code == 200
+        data = r.json()
         assert data["name"] == "COWORK.ARMY"
-        assert data["version"] == "5.0.0"
-        assert data["agents"] == 12
+        assert data["version"] == "6.0"
+        assert data["agents"] == 2
 
 
 # ═══════════════════════════════════════════════════════════
-#  AGENT ROUTES
+#  AGENT CRUD
 # ═══════════════════════════════════════════════════════════
 
-class TestAgentRoutes:
-    @pytest.mark.asyncio
-    async def test_list_agents(self, client):
-        resp = await client.get("/api/agents")
-        assert resp.status_code == 200
-        agents = resp.json()
-        assert isinstance(agents, list)
-        assert len(agents) == 12
+class TestAgentEndpoints:
+    def test_get_agents(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.get_all_agents.return_value = [
+            {"id": "commander", "name": "Commander"},
+            {"id": "web-dev", "name": "Full-Stack"},
+        ]
+        r = c.get("/api/agents")
+        assert r.status_code == 200
+        assert len(r.json()) == 2
 
-    @pytest.mark.asyncio
-    async def test_get_agent(self, client):
-        resp = await client.get("/api/agents/commander")
-        assert resp.status_code == 200
-        agent = resp.json()
-        assert agent["id"] == "commander"
-        assert agent["tier"] == "COMMANDER"
+    def test_get_agent_detail(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.get_agent.return_value = {"id": "web-dev", "name": "Full-Stack"}
+        r = c.get("/api/agents/web-dev")
+        assert r.status_code == 200
+        assert r.json()["id"] == "web-dev"
 
-    @pytest.mark.asyncio
-    async def test_get_agent_not_found(self, client):
-        resp = await client.get("/api/agents/nonexistent")
-        assert resp.status_code == 404
+    def test_get_agent_not_found(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.get_agent.return_value = None
+        r = c.get("/api/agents/nonexistent")
+        assert r.status_code == 404
 
-    @pytest.mark.asyncio
-    async def test_create_agent(self, client):
-        resp = await client.post("/api/agents", data={
-            "name": "New Dynamic Agent",
-            "icon": "🤖",
-            "tier": "WORKER",
-            "color": "#ff0000",
-            "domain": "Testing",
-            "desc": "A test agent",
-            "skills": json.dumps(["test_skill"]),
-            "rules": json.dumps(["test_rule"]),
-            "workspace_dir": ".",
-            "triggers": json.dumps(["test"]),
-            "system_prompt": "You are a test agent.",
+    def test_create_agent(self, app_client):
+        c, _, _ = app_client
+        r = c.post("/api/agents", data={
+            "agent_id": "test-agent", "name": "Test Agent",
+            "icon": "🤖", "domain": "Testing",
         })
-        assert resp.status_code == 200
-        agent = resp.json()
-        assert agent["name"] == "New Dynamic Agent"
-        assert agent["is_base"] is False
+        assert r.status_code == 200
+        assert r.json()["status"] == "created"
 
-    @pytest.mark.asyncio
-    async def test_create_agent_with_custom_id(self, client):
-        resp = await client.post("/api/agents", data={
-            "id": "custom-id",
-            "name": "Custom ID Agent",
-        })
-        assert resp.status_code == 200
-        assert resp.json()["id"] == "custom-id"
+    def test_update_agent(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.get_agent.side_effect = [
+            {"id": "web-dev", "name": "Old Name"},  # exists check
+            {"id": "web-dev", "name": "New Name"},   # return after upsert
+        ]
+        mock_db.upsert_agent.return_value = None
+        r = c.put("/api/agents/web-dev", data={"name": "New Name"})
+        assert r.status_code == 200
 
-    @pytest.mark.asyncio
-    async def test_update_agent(self, client):
-        resp = await client.put("/api/agents/commander", data={
-            "name": "Updated Commander",
-        })
-        assert resp.status_code == 200
-        assert resp.json()["name"] == "Updated Commander"
+    def test_update_agent_not_found(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.get_agent.return_value = None
+        r = c.put("/api/agents/nonexistent", data={"name": "X"})
+        assert r.status_code == 404
 
-    @pytest.mark.asyncio
-    async def test_update_nonexistent_agent(self, client):
-        resp = await client.put("/api/agents/nonexistent", data={
-            "name": "Ghost",
-        })
-        assert resp.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_delete_dynamic_agent(self, client):
-        await client.post("/api/agents", data={
-            "id": "deleteme",
-            "name": "Delete Me",
-        })
-        resp = await client.delete("/api/agents/deleteme")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "deleted"
-
-    @pytest.mark.asyncio
-    async def test_delete_base_agent_forbidden(self, client):
-        resp = await client.delete("/api/agents/commander")
-        assert resp.status_code == 403
-
-    @pytest.mark.asyncio
-    async def test_delete_nonexistent_agent(self, client):
-        resp = await client.delete("/api/agents/nonexistent")
-        assert resp.status_code == 404
+    def test_delete_agent(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.delete_agent.return_value = True
+        r = c.delete("/api/agents/test-agent")
+        assert r.status_code == 200
+        assert r.json()["deleted"] is True
+        assert r.json()["agent_id"] == "test-agent"
 
 
 # ═══════════════════════════════════════════════════════════
-#  AGENT LIFECYCLE ROUTES
+#  AGENT LIFECYCLE
 # ═══════════════════════════════════════════════════════════
 
-class TestAgentLifecycleRoutes:
-    @pytest.mark.asyncio
-    async def test_spawn_agent(self, client):
-        resp = await client.post("/api/agents/web-dev/spawn?task=test+task")
-        assert resp.status_code == 200
+class TestLifecycle:
+    def test_spawn_agent(self, app_client):
+        c, _, _ = app_client
+        r = c.post("/api/agents/web-dev/spawn?task=build+frontend")
+        assert r.status_code == 200
+        assert r.json()["status"] == "thinking"
 
-    @pytest.mark.asyncio
-    async def test_spawn_nonexistent_agent(self, client):
-        resp = await client.post("/api/agents/nonexistent/spawn")
-        assert resp.status_code == 404
+    def test_spawn_agent_no_task(self, app_client):
+        c, _, _ = app_client
+        r = c.post("/api/agents/web-dev/spawn")
+        assert r.status_code == 200
 
-    @pytest.mark.asyncio
-    async def test_kill_agent(self, client):
-        resp = await client.post("/api/agents/web-dev/kill")
-        assert resp.status_code == 200
+    def test_kill_agent(self, app_client):
+        c, _, _ = app_client
+        r = c.post("/api/agents/web-dev/kill")
+        assert r.status_code == 200
+        assert r.json()["status"] == "killed"
 
-    @pytest.mark.asyncio
-    async def test_kill_nonexistent(self, client):
-        resp = await client.post("/api/agents/nonexistent/kill")
-        assert resp.status_code == 404
+    def test_get_output(self, app_client):
+        c, _, _ = app_client
+        r = c.get("/api/agents/web-dev/output")
+        assert r.status_code == 200
+        assert "lines" in r.json()
 
-    @pytest.mark.asyncio
-    async def test_get_statuses(self, client):
-        resp = await client.get("/api/statuses")
-        assert resp.status_code == 200
-        statuses = resp.json()
-        assert isinstance(statuses, dict)
-        assert "commander" in statuses
-
-    @pytest.mark.asyncio
-    async def test_get_output(self, client):
-        resp = await client.get("/api/agents/web-dev/output")
-        assert resp.status_code == 200
-        assert "lines" in resp.json()
-
-    @pytest.mark.asyncio
-    async def test_get_output_nonexistent(self, client):
-        resp = await client.get("/api/agents/nonexistent/output")
-        assert resp.status_code == 404
+    def test_get_statuses(self, app_client):
+        c, _, _ = app_client
+        r = c.get("/api/statuses")
+        assert r.status_code == 200
 
 
 # ═══════════════════════════════════════════════════════════
-#  TASK ROUTES
+#  TASKS
 # ═══════════════════════════════════════════════════════════
 
-class TestTaskRoutes:
-    @pytest.mark.asyncio
-    async def test_create_task(self, client):
-        resp = await client.post("/api/tasks", data={
-            "title": "Test Task",
-            "description": "Do something",
-            "assigned_to": "web-dev",
-            "priority": "high",
-        })
-        assert resp.status_code == 200
-        task = resp.json()
-        assert task["title"] == "Test Task"
-        assert task["status"] == "pending"
+class TestTasks:
+    def test_get_tasks(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.list_tasks.return_value = [{"id": "TASK-1", "title": "Test"}]
+        r = c.get("/api/tasks")
+        assert r.status_code == 200
+        assert len(r.json()) == 1
 
-    @pytest.mark.asyncio
-    async def test_list_tasks(self, client):
-        resp = await client.get("/api/tasks")
-        assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
+    def test_create_task_with_assignment(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.create_task.return_value = {
+            "id": "TASK-NEW", "title": "Build frontend", "assigned_to": "web-dev",
+            "status": "pending",
+        }
+        r = c.post("/api/tasks", data={
+            "title": "Build frontend", "assigned_to": "web-dev",
+        })
+        assert r.status_code == 200
+        mock_db.create_task.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_get_task_not_found(self, client):
-        resp = await client.get("/api/tasks/nonexistent")
-        assert resp.status_code == 404
+    def test_create_task_auto_delegate(self, app_client):
+        c, _, _ = app_client
+        r = c.post("/api/tasks", data={"title": "Auto routed task"})
+        assert r.status_code == 200
+        assert r.json()["id"] == "TASK-MOCK01"
 
-    @pytest.mark.asyncio
-    async def test_update_task_status(self, client):
-        create_resp = await client.post("/api/tasks", data={
-            "title": "Status Test",
-            "assigned_to": "web-dev",
-        })
-        task_id = create_resp.json()["id"]
-        resp = await client.put(f"/api/tasks/{task_id}", data={
-            "status": "in_progress",
-            "log_message": "Started",
-        })
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "in_progress"
+    def test_update_task(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.get_task.side_effect = [
+            {"id": "TASK-1", "status": "pending", "log": []},
+            {"id": "TASK-1", "status": "done", "log": ["Done!"]},
+        ]
+        mock_db.update_task.return_value = None
+        r = c.put("/api/tasks/TASK-1", data={"status": "done", "log_message": "Done!"})
+        assert r.status_code == 200
 
-    @pytest.mark.asyncio
-    async def test_update_task_invalid_status(self, client):
-        create_resp = await client.post("/api/tasks", data={
-            "title": "Invalid Status",
-            "assigned_to": "web-dev",
-        })
-        task_id = create_resp.json()["id"]
-        resp = await client.put(f"/api/tasks/{task_id}", data={
-            "status": "invalid_status",
-        })
-        assert resp.status_code == 400
+    def test_update_task_not_found(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.get_task.return_value = None
+        r = c.put("/api/tasks/NONEXIST", data={"status": "done"})
+        assert r.status_code == 404
 
 
 # ═══════════════════════════════════════════════════════════
-#  AUTONOMOUS ROUTES
+#  COMMANDER ENDPOINT
 # ═══════════════════════════════════════════════════════════
 
-class TestAutonomousRoutes:
-    @pytest.mark.asyncio
-    async def test_autonomous_status(self, client):
-        resp = await client.get("/api/autonomous/status")
-        assert resp.status_code == 200
-        status = resp.json()
-        assert "running" in status
-        assert "tick_count" in status
-
-    @pytest.mark.asyncio
-    async def test_autonomous_start_stop(self, client):
-        resp = await client.post("/api/autonomous/start")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "started"
-
-        resp = await client.post("/api/autonomous/stop")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "stopped"
-
-    @pytest.mark.asyncio
-    async def test_autonomous_events(self, client):
-        resp = await client.get("/api/autonomous/events?limit=10")
-        assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
+class TestCommanderEndpoint:
+    def test_delegate(self, app_client):
+        c, _, _ = app_client
+        r = c.post("/api/commander/delegate", data={
+            "title": "Test task", "description": "Test desc", "priority": "high",
+        })
+        assert r.status_code == 200
+        assert "id" in r.json()
 
 
 # ═══════════════════════════════════════════════════════════
-#  COMMANDER DELEGATION
+#  AUTONOMOUS
 # ═══════════════════════════════════════════════════════════
 
-class TestCommanderDelegation:
-    @pytest.mark.asyncio
-    async def test_delegate_medical_task(self, client):
-        resp = await client.post("/api/commander/delegate", data={
-            "title": "Hasta randevusu oluştur",
-            "description": "Rhinoplasty ameliyatı için klinik eşleştirme",
-            "priority": "high",
-            "auto_spawn": "false",
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["routed_to"] == "med-health"
+class TestAutonomous:
+    def test_start(self, app_client):
+        c, _, _ = app_client
+        r = c.post("/api/autonomous/start")
+        assert r.status_code == 200
+        assert r.json()["status"] == "started"
 
-    @pytest.mark.asyncio
-    async def test_delegate_trading_task(self, client):
-        resp = await client.post("/api/commander/delegate", data={
-            "title": "BTC trading sinyal analizi",
-            "description": "Bitcoin teknik analiz yapılmalı",
-            "priority": "normal",
-            "auto_spawn": "false",
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["routed_to"] in ("trade-engine", "tech-analyst")
+    def test_stop(self, app_client):
+        c, _, _ = app_client
+        r = c.post("/api/autonomous/stop")
+        assert r.status_code == 200
+        assert r.json()["status"] == "stopped"
 
-    @pytest.mark.asyncio
-    async def test_delegate_creates_task(self, client):
-        resp = await client.post("/api/commander/delegate", data={
-            "title": "Frontend bug fix",
-            "description": "React component crash",
-            "auto_spawn": "false",
-        })
-        data = resp.json()
-        assert "task" in data
-        assert data["task"]["title"] == "Frontend bug fix"
+    def test_status(self, app_client):
+        c, _, mock_auto = app_client
+        r = c.get("/api/autonomous/status")
+        assert r.status_code == 200
+        assert "running" in r.json()
+
+    def test_events(self, app_client):
+        c, mock_db, _ = app_client
+        mock_db.get_events.return_value = [
+            {"message": "tick event", "agent_id": "commander", "type": "info"}
+        ]
+        r = c.get("/api/autonomous/events?limit=10")
+        assert r.status_code == 200
+        assert len(r.json()) == 1
 
 
 # ═══════════════════════════════════════════════════════════
@@ -361,9 +272,11 @@ class TestCommanderDelegation:
 # ═══════════════════════════════════════════════════════════
 
 class TestSettings:
-    @pytest.mark.asyncio
-    async def test_api_key_status(self, client):
-        resp = await client.get("/api/settings/api-key-status")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "has_key" in data
+    def test_api_key_status_with_env(self, app_client):
+        c, _, _ = app_client
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-test-key-12345"}):
+            r = c.get("/api/settings/api-key-status")
+            assert r.status_code == 200
+            data = r.json()
+            assert data["set"] is True
+            assert "sk-ant-test-" in data["preview"]

@@ -1,18 +1,19 @@
 """
-COWORK.ARMY — Agent Runner (Claude API lifecycle)
-spawn → read workspace → Claude API → write output → done/error
+COWORK.ARMY — Agent Runner (Multi-LLM lifecycle)
+spawn → read workspace → LLM API (with tool_use) → write output → done/error
+Supports: Anthropic (Claude), Google (Gemini)
 
 DB calls from threads use _sync_db() to bridge async→sync via the main event loop.
 """
 import os, json, asyncio, threading
 from pathlib import Path
 from datetime import datetime
-from anthropic import Anthropic
 from database import get_db
 from database.connection import get_event_loop
+from tools import read_file, write_file, list_dir, search_files, run_command
+from llm_providers import get_provider, TOOL_DEFS
 
-MODEL = "claude-sonnet-4-20250514"
-MAX_TOKENS = 4096
+MAX_TOOL_ROUNDS = 10
 WORKSPACE = Path(__file__).parent / "workspace"
 
 
@@ -46,15 +47,28 @@ class AgentProc:
 PROCS: dict[str, AgentProc] = {}
 
 
-def _get_api_key() -> str:
-    k = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not k:
+def _read_env_value(key: str) -> str:
+    """Read a value from environment or .env file."""
+    v = os.environ.get(key, "")
+    if not v:
         env = Path(__file__).parent / ".env"
         if env.exists():
             for line in env.read_text().splitlines():
-                if line.startswith("ANTHROPIC_API_KEY="):
-                    k = line.split("=", 1)[1].strip().strip('"')
-    return k
+                if line.startswith(f"{key}="):
+                    v = line.split("=", 1)[1].strip().strip('"')
+    return v
+
+
+def _get_llm_config() -> tuple[str, str, str]:
+    """Return (provider_name, api_key, model) from env."""
+    provider = _read_env_value("LLM_PROVIDER") or "anthropic"
+    if provider == "gemini":
+        api_key = _read_env_value("GOOGLE_API_KEY")
+        model = _read_env_value("GEMINI_MODEL") or ""
+    else:
+        api_key = _read_env_value("ANTHROPIC_API_KEY")
+        model = _read_env_value("ANTHROPIC_MODEL") or ""
+    return provider, api_key, model
 
 
 def _workspace_context(agent_id: str) -> str:
@@ -78,57 +92,111 @@ def _workspace_context(agent_id: str) -> str:
     return "\n".join(parts)
 
 
+def _execute_tool(agent_id: str, tool_name: str, tool_input: dict) -> str:
+    """Execute a tool call and return the result as a string."""
+    try:
+        if tool_name == "read_file":
+            result = read_file(agent_id, tool_input["path"])
+        elif tool_name == "write_file":
+            result = write_file(agent_id, tool_input["path"], tool_input["content"])
+        elif tool_name == "list_dir":
+            result = list_dir(agent_id, tool_input.get("path", ""))
+        elif tool_name == "search_files":
+            result = search_files(agent_id, tool_input["pattern"], tool_input.get("directory", ""))
+        elif tool_name == "run_command":
+            result = run_command(agent_id, tool_input["command"], tool_input.get("cwd", ""))
+        else:
+            result = {"error": f"Unknown tool: {tool_name}"}
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 def _run(proc: AgentProc, task: str):
-    """Run agent in a thread. Uses _sync_db() for async DB calls."""
+    """Run agent in a thread with tool_use support. Uses _sync_db() for async DB calls."""
     db = get_db()
     agent = _sync_db(db.get_agent(proc.agent_id))
     if not agent:
-        proc.status = "error"; proc.log("❌ Agent not found"); return
+        proc.status = "error"; proc.log("Agent not found"); return
 
     proc.status = "thinking"
-    proc.log(f"🧠 Claude API bağlanıyor ({MODEL})")
 
-    key = _get_api_key()
-    if not key:
+    provider_name, api_key, model = _get_llm_config()
+    provider_label = "Gemini" if provider_name == "gemini" else "Claude"
+    proc.log(f"{provider_label} API baglaniyor ({model or 'default'})")
+
+    if not api_key:
+        key_name = "GOOGLE_API_KEY" if provider_name == "gemini" else "ANTHROPIC_API_KEY"
         proc.status = "error"
-        proc.log("❌ ANTHROPIC_API_KEY bulunamadı!")
-        proc.log("💡 Dashboard'dan API Key girin veya .env dosyasına ekleyin")
+        proc.log(f"{key_name} bulunamadi!")
+        proc.log("Dashboard'dan API Key girin veya .env dosyasina ekleyin")
         return
 
-    proc.log("📂 Workspace okunuyor...")
+    proc.log("Workspace okunuyor...")
     proc.status = "searching"
     ctx = _workspace_context(proc.agent_id)
 
-    sys_prompt = agent["system_prompt"] + f"""
+    sys_prompt = agent["system_prompt"] + """
 
-ÇIKTI FORMATI (JSON):
-{{"status":"completed","summary":"Kısa özet","actions_taken":["Yapılan 1"],"output_files":[{{"filename":"x.md","content":"..."}}],"notes":"","next_steps":["Sonraki adım"]}}"""
+Sana verilen tool'lari kullanarak gorevini tamamla.
+Dosya okuma, yazma, dizin listeleme, arama ve komut calistirma yapabilirsin.
+Isini bitirdiginde sonucu ozetle."""
 
-    user_msg = f"Görevin:\n{task}\n\nWorkspace durumun:\n{ctx}\n\nGörevi yap ve JSON formatında yanıtla."
-    proc.log(f"📋 Görev: {task[:80]}")
-    proc.log("🚀 API çağrısı...")
+    user_msg = f"Gorevin:\n{task}\n\nWorkspace durumun:\n{ctx}\n\nGorevi yap."
+    proc.log(f"Gorev: {task[:80]}")
+    proc.log("API cagrisi...")
     proc.status = "working"
 
     try:
-        client = Anthropic(api_key=key)
-        collected = ""
-        with client.messages.stream(model=MODEL, max_tokens=MAX_TOKENS, system=sys_prompt,
-                                     messages=[{"role": "user", "content": user_msg}]) as stream:
-            proc.log("📡 Stream alınıyor...")
-            for text in stream.text_stream:
-                collected += text
-                if len(collected) % 200 < len(text):
-                    proc.log(f"  ...{collected[-60:].replace(chr(10), ' ')}")
-        proc.log(f"✅ Yanıt: {len(collected)} karakter")
+        provider = get_provider(provider_name, api_key, model)
+        messages = [{"role": "user", "content": user_msg}]
+        collected_text = ""
+
+        for round_num in range(MAX_TOOL_ROUNDS):
+            if proc.status == "done":
+                break  # killed externally
+
+            text, tool_calls = provider.chat(sys_prompt, messages, TOOL_DEFS)
+
+            if text:
+                collected_text += text
+                preview = text[:80].replace('\n', ' ')
+                proc.log(f"  {preview}")
+
+            for tc in tool_calls:
+                proc.log(f"  Tool: {tc.name}({json.dumps(tc.input, ensure_ascii=False)[:60]})")
+
+            # Add assistant message to history
+            messages.append(provider.format_assistant_message(text, tool_calls))
+
+            # If no tool calls, we're done
+            if not tool_calls:
+                proc.log(f"Yanit: {len(collected_text)} karakter")
+                break
+
+            # Execute tool calls and add results
+            proc.status = "coding"
+            tool_results = []
+            for tc in tool_calls:
+                proc.log(f"  Tool calistiriliyor: {tc.name}")
+                result_str = _execute_tool(proc.agent_id, tc.name, tc.input)
+                tool_results.append(provider.format_tool_result(tc, result_str))
+                preview = result_str[:80].replace('\n', ' ')
+                proc.log(f"    Sonuc: {preview}")
+
+            messages.append({"role": "user", "content": tool_results})
+            proc.status = "working"
+            proc.log(f"  Round {round_num + 1}/{MAX_TOOL_ROUNDS} tamamlandi")
+
         proc.status = "coding"
-        proc.log("💾 Çıktı kaydediliyor...")
-        _save_output(proc.agent_id, task, collected, proc)
+        proc.log("Cikti kaydediliyor...")
+        _save_output(proc.agent_id, task, collected_text, proc)
         proc.status = "done"
-        proc.log("✅ Görev tamamlandı!")
-        _sync_db(db.add_event(proc.agent_id, f"Görev tamamlandı: {task[:50]}", "info"))
+        proc.log("Gorev tamamlandi!")
+        _sync_db(db.add_event(proc.agent_id, f"Gorev tamamlandi: {task[:50]}", "info"))
     except Exception as e:
         proc.status = "error"
-        proc.log(f"❌ {e}")
+        proc.log(f"Hata: {e}")
         _sync_db(db.add_event(proc.agent_id, f"Hata: {e}", "warning"))
 
 

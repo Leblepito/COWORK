@@ -286,3 +286,281 @@ export function Briefcase({ scale = 1 }: AccessoryProps) {
         </group>
     );
 }
+
+/* ══════════════════════════════════════════════════════ */
+/* ── v7 NEW ACCESSORIES ────────────────────────────── */
+/* ══════════════════════════════════════════════════════ */
+
+/* ── Gamepad ────────────────────────────────────────── */
+export function Gamepad({ color, scale = 1 }: AccessoryProps) {
+    return (
+        <group>
+            <mesh>
+                <boxGeometry args={[0.07 * scale, 0.02 * scale, 0.04 * scale]} />
+                <meshStandardMaterial color="#1f2937" roughness={0.5} />
+            </mesh>
+            <mesh position={[-0.02 * scale, 0.012 * scale, 0]}>
+                <sphereGeometry args={[0.006 * scale, 6, 6]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.8} />
+            </mesh>
+            <mesh position={[0.02 * scale, 0.012 * scale, 0]}>
+                <sphereGeometry args={[0.006 * scale, 6, 6]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.8} />
+            </mesh>
+        </group>
+    );
+}
+
+/* ── ChartScreen (Trade Master) ────────────────────── */
+export function ChartScreen({ color, scale = 1 }: AccessoryProps) {
+    const barRef = useRef<THREE.Mesh>(null);
+    useFrame((state) => {
+        if (barRef.current) barRef.current.scale.y = 0.8 + Math.sin(state.clock.elapsedTime * 3) * 0.3;
+    });
+    return (
+        <group>
+            <mesh>
+                <boxGeometry args={[0.12 * scale, 0.08 * scale, 0.003 * scale]} />
+                <meshStandardMaterial color="#0f172a" emissive={color} emissiveIntensity={0.3} />
+            </mesh>
+            {/* Candlestick bars */}
+            {[-0.04, -0.02, 0, 0.02, 0.04].map((x, i) => (
+                <mesh key={i} ref={i === 2 ? barRef : undefined} position={[x * scale, -0.01 * scale, 0.003 * scale]}>
+                    <boxGeometry args={[0.008 * scale, 0.03 * scale, 0.002 * scale]} />
+                    <meshStandardMaterial color={i % 2 === 0 ? "#22c55e" : "#ef4444"} emissive={i % 2 === 0 ? "#22c55e" : "#ef4444"} emissiveIntensity={0.6} />
+                </mesh>
+            ))}
+        </group>
+    );
+}
+
+/* ── Terminal (Full Stack Dev) ──────────────────────── */
+export function Terminal({ color, scale = 1 }: AccessoryProps) {
+    const cursorRef = useRef<THREE.Mesh>(null);
+    useFrame((state) => {
+        if (cursorRef.current) cursorRef.current.visible = Math.sin(state.clock.elapsedTime * 4) > 0;
+    });
+    return (
+        <group>
+            {/* Screen */}
+            <mesh position={[0, 0.03 * scale, -0.025 * scale]} rotation={[-0.4, 0, 0]}>
+                <boxGeometry args={[0.07 * scale, 0.05 * scale, 0.003 * scale]} />
+                <meshStandardMaterial color="#0f172a" emissive={color} emissiveIntensity={0.4} />
+            </mesh>
+            {/* Base */}
+            <mesh>
+                <boxGeometry args={[0.08 * scale, 0.004 * scale, 0.06 * scale]} />
+                <meshStandardMaterial color="#1f2937" metalness={0.4} roughness={0.5} />
+            </mesh>
+            {/* Cursor blink */}
+            <mesh ref={cursorRef} position={[0.01 * scale, 0.035 * scale, -0.022 * scale]} rotation={[-0.4, 0, 0]}>
+                <boxGeometry args={[0.005 * scale, 0.01 * scale, 0.001 * scale]} />
+                <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={2} />
+            </mesh>
+        </group>
+    );
+}
+
+/* ── Stethoscope (Clinic Director) ─────────────────── */
+export function Stethoscope({ color, scale = 1 }: AccessoryProps) {
+    return (
+        <group>
+            {/* Tube arc */}
+            <mesh rotation={[Math.PI / 2, 0, 0]}>
+                <torusGeometry args={[0.06 * scale, 0.005 * scale, 6, 16, Math.PI]} />
+                <meshStandardMaterial color="#6b7280" />
+            </mesh>
+            {/* Chest piece */}
+            <mesh position={[0, -0.06 * scale, 0]}>
+                <cylinderGeometry args={[0.015 * scale, 0.012 * scale, 0.01 * scale, 8]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} metalness={0.6} />
+            </mesh>
+            {/* Ear pieces */}
+            <mesh position={[-0.06 * scale, 0, 0]}>
+                <sphereGeometry args={[0.008 * scale, 6, 6]} />
+                <meshStandardMaterial color="#9ca3af" metalness={0.5} />
+            </mesh>
+            <mesh position={[0.06 * scale, 0, 0]}>
+                <sphereGeometry args={[0.008 * scale, 6, 6]} />
+                <meshStandardMaterial color="#9ca3af" metalness={0.5} />
+            </mesh>
+        </group>
+    );
+}
+
+/* ── Globe (Travel Planner) ────────────────────────── */
+export function Globe({ color, scale = 1 }: AccessoryProps) {
+    const ref = useRef<THREE.Mesh>(null);
+    useFrame((state) => {
+        if (ref.current) ref.current.rotation.y = state.clock.elapsedTime * 0.5;
+    });
+    return (
+        <group>
+            <mesh ref={ref}>
+                <sphereGeometry args={[0.06 * scale, 16, 16]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.3} wireframe transparent opacity={0.6} />
+            </mesh>
+            {/* Equator ring */}
+            <mesh rotation={[Math.PI / 2, 0, 0]}>
+                <torusGeometry args={[0.065 * scale, 0.003 * scale, 6, 24]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} />
+            </mesh>
+        </group>
+    );
+}
+
+/* ── Gear (Data Ops) ───────────────────────────────── */
+export function Gear({ color, scale = 1 }: AccessoryProps) {
+    const ref = useRef<THREE.Mesh>(null);
+    useFrame((state) => {
+        if (ref.current) ref.current.rotation.z = state.clock.elapsedTime * 1.5;
+    });
+    return (
+        <group>
+            {/* Gear body — torus with teeth approximation */}
+            <mesh ref={ref}>
+                <torusGeometry args={[0.04 * scale, 0.012 * scale, 6, 8]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} metalness={0.7} roughness={0.3} />
+            </mesh>
+            {/* Center hub */}
+            <mesh>
+                <cylinderGeometry args={[0.012 * scale, 0.012 * scale, 0.01 * scale, 6]} />
+                <meshStandardMaterial color="#374151" metalness={0.6} />
+            </mesh>
+        </group>
+    );
+}
+
+/* ── KeyCard (Hotel Manager) ───────────────────────── */
+export function KeyCard({ color, scale = 1 }: AccessoryProps) {
+    return (
+        <group>
+            <mesh>
+                <boxGeometry args={[0.04 * scale, 0.06 * scale, 0.004 * scale]} />
+                <meshStandardMaterial color="#e2e8f0" roughness={0.4} />
+            </mesh>
+            {/* Magnetic strip */}
+            <mesh position={[0, -0.015 * scale, 0.003 * scale]}>
+                <boxGeometry args={[0.035 * scale, 0.008 * scale, 0.001 * scale]} />
+                <meshStandardMaterial color="#1f2937" />
+            </mesh>
+            {/* LED indicator */}
+            <mesh position={[0, 0.02 * scale, 0.003 * scale]}>
+                <sphereGeometry args={[0.004 * scale, 6, 6]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.5} />
+            </mesh>
+        </group>
+    );
+}
+
+/* ── Wrench ────────────────────────────────────────── */
+export function Wrench({ color, scale = 1 }: AccessoryProps) {
+    return (
+        <group rotation={[0, 0, 0.3]}>
+            {/* Handle */}
+            <mesh position={[0, -0.03 * scale, 0]}>
+                <cylinderGeometry args={[0.006 * scale, 0.006 * scale, 0.06 * scale, 6]} />
+                <meshStandardMaterial color={color} metalness={0.7} roughness={0.3} />
+            </mesh>
+            {/* Head */}
+            <mesh position={[0, 0.01 * scale, 0]}>
+                <torusGeometry args={[0.015 * scale, 0.005 * scale, 4, 6, Math.PI * 1.5]} />
+                <meshStandardMaterial color={color} metalness={0.8} roughness={0.2} />
+            </mesh>
+        </group>
+    );
+}
+
+/* ── MonitorStack (Tech Lead) ──────────────────────── */
+export function MonitorStack({ color, scale = 1 }: AccessoryProps) {
+    return (
+        <group>
+            {/* Main monitor */}
+            <mesh position={[0, 0.03 * scale, 0]} rotation={[-0.2, 0, 0]}>
+                <boxGeometry args={[0.09 * scale, 0.06 * scale, 0.003 * scale]} />
+                <meshStandardMaterial color="#0f172a" emissive={color} emissiveIntensity={0.5} />
+            </mesh>
+            {/* Side monitor */}
+            <mesh position={[0.055 * scale, 0.03 * scale, 0.01 * scale]} rotation={[-0.2, -0.4, 0]}>
+                <boxGeometry args={[0.05 * scale, 0.04 * scale, 0.002 * scale]} />
+                <meshStandardMaterial color="#0f172a" emissive={color} emissiveIntensity={0.3} />
+            </mesh>
+            {/* Stand */}
+            <mesh position={[0, 0, 0]}>
+                <cylinderGeometry args={[0.008 * scale, 0.015 * scale, 0.02 * scale, 6]} />
+                <meshStandardMaterial color="#374151" metalness={0.5} />
+            </mesh>
+        </group>
+    );
+}
+
+/* ── Phone (Concierge) ─────────────────────────────── */
+export function Phone({ color, scale = 1 }: AccessoryProps) {
+    return (
+        <group>
+            <mesh>
+                <boxGeometry args={[0.03 * scale, 0.055 * scale, 0.005 * scale]} />
+                <meshStandardMaterial color="#1f2937" roughness={0.4} />
+            </mesh>
+            {/* Screen */}
+            <mesh position={[0, 0.005 * scale, 0.003 * scale]}>
+                <boxGeometry args={[0.025 * scale, 0.04 * scale, 0.001 * scale]} />
+                <meshStandardMaterial color="#0f172a" emissive={color} emissiveIntensity={0.6} />
+            </mesh>
+        </group>
+    );
+}
+
+/* ── Brain (Quant Brain) ───────────────────────────── */
+export function Brain({ color, scale = 1 }: AccessoryProps) {
+    const ref = useRef<THREE.Group>(null);
+    useFrame((state) => {
+        if (ref.current) {
+            const s = 1 + Math.sin(state.clock.elapsedTime * 2) * 0.08;
+            ref.current.scale.setScalar(s);
+        }
+    });
+    return (
+        <group ref={ref}>
+            {/* Main brain mass */}
+            <mesh>
+                <sphereGeometry args={[0.05 * scale, 8, 8]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.6} transparent opacity={0.8} />
+            </mesh>
+            {/* Brain folds — smaller spheres */}
+            <mesh position={[-0.02 * scale, 0.02 * scale, 0]}>
+                <sphereGeometry args={[0.03 * scale, 6, 6]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} transparent opacity={0.6} />
+            </mesh>
+            <mesh position={[0.02 * scale, 0.02 * scale, 0]}>
+                <sphereGeometry args={[0.03 * scale, 6, 6]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} transparent opacity={0.6} />
+            </mesh>
+        </group>
+    );
+}
+
+/* ── Package (Cargo) ───────────────────────────────── */
+export function Package({ color, scale = 1 }: AccessoryProps) {
+    const ref = useRef<THREE.Mesh>(null);
+    useFrame((state) => {
+        if (ref.current) ref.current.position.y = Math.sin(state.clock.elapsedTime * 2) * 0.01;
+    });
+    return (
+        <group>
+            <mesh ref={ref}>
+                <boxGeometry args={[0.06 * scale, 0.05 * scale, 0.06 * scale]} />
+                <meshStandardMaterial color="#92400e" roughness={0.7} />
+            </mesh>
+            {/* Tape cross */}
+            <mesh position={[0, 0.026 * scale, 0]}>
+                <boxGeometry args={[0.06 * scale, 0.002 * scale, 0.01 * scale]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} />
+            </mesh>
+            <mesh position={[0, 0.026 * scale, 0]}>
+                <boxGeometry args={[0.01 * scale, 0.002 * scale, 0.06 * scale]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} />
+            </mesh>
+        </group>
+    );
+}
