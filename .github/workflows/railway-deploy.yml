@@ -19,105 +19,12 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy via CLI
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Deploy backend
         run: |
-          set +e
-          REPORT="## Railway Deploy Report — $(date -u '+%Y-%m-%d %H:%M UTC')\n\n"
-
-          # Show project info
-          REPORT+="### Project Status\n\`\`\`\n"
-          STATUS=$(railway status 2>&1)
-          REPORT+="$STATUS\n"
-          REPORT+="\`\`\`\n\n"
-
-          # Deploy backend
-          REPORT+="### Backend Deploy\n\`\`\`\n"
           cd backend
-          BACKEND_OUT=$(railway up --detach --service Backend --environment production 2>&1)
-          BACKEND_EXIT=$?
-          REPORT+="$BACKEND_OUT\n"
-          REPORT+="Exit code: $BACKEND_EXIT\n"
-          cd ..
+          railway up --detach --service backend --environment production
 
-          # If "Backend" didn't work, try lowercase
-          if [ $BACKEND_EXIT -ne 0 ]; then
-            cd backend
-            BACKEND_OUT2=$(railway up --detach --service backend --environment production 2>&1)
-            BACKEND_EXIT2=$?
-            REPORT+="Retry with lowercase: $BACKEND_OUT2 (exit: $BACKEND_EXIT2)\n"
-            cd ..
-          fi
-          REPORT+="\`\`\`\n\n"
-
-          # Deploy frontend
-          REPORT+="### Frontend Deploy\n\`\`\`\n"
+      - name: Deploy frontend
+        run: |
           cd frontend
-          FRONTEND_OUT=$(railway up --detach --service Frontend --environment production 2>&1)
-          FRONTEND_EXIT=$?
-          REPORT+="$FRONTEND_OUT\n"
-          REPORT+="Exit code: $FRONTEND_EXIT\n"
-          cd ..
-
-          # If "Frontend" didn't work, try lowercase
-          if [ $FRONTEND_EXIT -ne 0 ]; then
-            cd frontend
-            FRONTEND_OUT2=$(railway up --detach --service frontend --environment production 2>&1)
-            FRONTEND_EXIT2=$?
-            REPORT+="Retry with lowercase: $FRONTEND_OUT2 (exit: $FRONTEND_EXIT2)\n"
-            cd ..
-          fi
-          REPORT+="\`\`\`\n\n"
-
-          # If both failed, try to list services for debugging
-          if [ $BACKEND_EXIT -ne 0 ] && [ $FRONTEND_EXIT -ne 0 ]; then
-            REPORT+="### Debug: Service Discovery\n\`\`\`\n"
-
-            # Try common service name patterns
-            for svc in "backend" "Backend" "frontend" "Frontend" "web" "api" "server"; do
-              REPORT+="Trying --service $svc: "
-              OUT=$(railway up --detach --service "$svc" --environment production 2>&1 | head -1)
-              REPORT+="$OUT\n"
-            done
-
-            # Also try without --environment flag
-            REPORT+="\nWithout --environment:\n"
-            cd backend
-            OUT=$(railway up --detach --service backend 2>&1 | head -1)
-            REPORT+="backend dir + --service backend: $OUT\n"
-            cd ..
-            cd frontend
-            OUT=$(railway up --detach --service frontend 2>&1 | head -1)
-            REPORT+="frontend dir + --service frontend: $OUT\n"
-            cd ..
-
-            # Try railway service to list services
-            REPORT+="\nrailway service: $(railway service 2>&1)\n"
-
-            # Try without any service flag to see the error message with service names
-            REPORT+="\nNo flags (to see available services):\n"
-            cd backend
-            OUT=$(railway up --detach 2>&1)
-            REPORT+="$OUT\n"
-            cd ..
-
-            REPORT+="\`\`\`\n"
-          fi
-
-          # Summary
-          if [ $BACKEND_EXIT -eq 0 ] || [ ${BACKEND_EXIT2:-1} -eq 0 ]; then
-            REPORT+="\n**Backend**: Deployed successfully\n"
-          else
-            REPORT+="\n**Backend**: Deploy failed\n"
-          fi
-          if [ $FRONTEND_EXIT -eq 0 ] || [ ${FRONTEND_EXIT2:-1} -eq 0 ]; then
-            REPORT+="\n**Frontend**: Deployed successfully\n"
-          else
-            REPORT+="\n**Frontend**: Deploy failed\n"
-          fi
-
-          # Post report
-          echo -e "$REPORT" > /tmp/report.md
-          cat /tmp/report.md
-          gh issue comment 30 -R Leblepito/COWORK -F /tmp/report.md
+          railway up --detach --service frontend --environment production
