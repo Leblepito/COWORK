@@ -67,6 +67,7 @@ export const getAgentOutput = (id: string) => coworkFetch<{ lines: string[] }>(`
 
 // ── Task Endpoints ──
 export const getCoworkTasks = () => coworkFetch<CoworkTask[]>("/tasks");
+export const getCoworkTask = (id: string) => coworkFetch<CoworkTask>(`/tasks/${id}`);
 export async function createCoworkTask(
   title: string, description: string, assignedTo: string, priority: string
 ): Promise<CoworkTask> {
@@ -78,6 +79,19 @@ export async function createCoworkTask(
   const res = await fetch(`${BASE}/tasks`, { method: "POST", body: fd });
   if (!res.ok) throw new Error(`API error ${res.status}`);
   return res.json() as Promise<CoworkTask>;
+}
+export async function updateCoworkTaskStatus(
+    id: string, status: string, logMessage: string = ""
+): Promise<CoworkTask> {
+    const fd = new FormData();
+    fd.append("status", status);
+    fd.append("log_message", logMessage);
+    const res = await fetch(`${BASE}/tasks/${id}`, { method: "PUT", body: fd });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`API error ${res.status}: ${text}`);
+    }
+    return res.json() as Promise<CoworkTask>;
 }
 
 // ── Autonomous Loop ──
