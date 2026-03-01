@@ -64,6 +64,27 @@ export const killAgent = (id: string) =>
   coworkFetch<{ status: string; agent_id: string }>(`/agents/${id}/kill`, { method: "POST" });
 export const getAgentStatuses = () => coworkFetch<Record<string, AgentStatus>>("/statuses");
 export const getAgentOutput = (id: string) => coworkFetch<{ lines: string[] }>(`/agents/${id}/output`);
+export async function createCoworkAgent(
+  agentId: string, name: string, icon: string, domain: string,
+  desc: string, skills: string, rules: string, triggers: string, systemPrompt: string
+): Promise<CoworkAgent> {
+  const fd = new FormData();
+  fd.append("agent_id", agentId);
+  fd.append("name", name);
+  fd.append("icon", icon);
+  fd.append("domain", domain);
+  fd.append("desc", desc);
+  fd.append("skills", skills);
+  fd.append("rules", rules);
+  fd.append("triggers", triggers);
+  fd.append("system_prompt", systemPrompt);
+  const res = await fetch(`${BASE}/agents`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json() as Promise<CoworkAgent>;
+}
+export async function deleteCoworkAgent(id: string): Promise<{ deleted: boolean }> {
+  return coworkFetch<{ deleted: boolean }>(`/agents/${id}`, { method: "DELETE" });
+}
 
 // ── Task Endpoints ──
 export const getCoworkTasks = () => coworkFetch<CoworkTask[]>("/tasks");
