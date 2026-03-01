@@ -148,41 +148,44 @@ class AnthropicProvider(LLMProvider):
 
 
 class GeminiProvider(LLMProvider):
-    """Gemini via google.genai SDK (new unified SDK)."""
+    """Gemini via google-generativeai SDK."""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.5-pro"):
-        from google import genai
-        from google.genai import types
-        self._client = genai.Client(api_key=api_key)
-        self._types = types
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        self._genai = genai
         self.model_name = model
+        self._model = genai.GenerativeModel(
+            model_name=model,
+            system_instruction=None,
+        )
         self._tool_call_counter = 0
 
     def _build_tools(self, tools: list) -> list:
         """Convert provider-agnostic tool defs to Gemini FunctionDeclarations."""
-        types = self._types
+        genai = self._genai
         declarations = []
         for t in tools:
             props = {}
             for pname, pdef in t["parameters"].get("properties", {}).items():
-                props[pname] = types.Schema(
-                    type=types.Type.STRING,
+                props[pname] = genai.protos.Schema(
+                    type=genai.protos.Type.STRING,
                     description=pdef.get("description", ""),
                 )
-            declarations.append(types.FunctionDeclaration(
+            declarations.append(genai.protos.FunctionDeclaration(
                 name=t["name"],
                 description=t["description"],
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
+                parameters=genai.protos.Schema(
+                    type=genai.protos.Type.OBJECT,
                     properties=props,
                     required=t["parameters"].get("required", []),
                 ),
             ))
-        return [types.Tool(function_declarations=declarations)]
+        return [genai.protos.Tool(function_declarations=declarations)]
 
     def _build_contents(self, messages: list) -> list:
         """Convert message history to Gemini Content list."""
-        types = self._types
+        genai = self._genai
         contents = []
         for msg in messages:
             role = msg["role"]
@@ -190,53 +193,56 @@ class GeminiProvider(LLMProvider):
 
             if role == "user":
                 if isinstance(content, str):
-                    contents.append(types.Content(
+                    contents.append(genai.protos.Content(
                         role="user",
-                        parts=[types.Part.from_text(text=content)],
+                        parts=[genai.protos.Part(text=content)],
                     ))
                 elif isinstance(content, list):
-                    # Tool results
                     parts = []
                     for item in content:
                         if isinstance(item, dict) and item.get("type") == "tool_result":
-                            parts.append(types.Part.from_function_response(
-                                name=item["_function_name"],
-                                response={"result": item["content"]},
+                            parts.append(genai.protos.Part(
+                                function_response=genai.protos.FunctionResponse(
+                                    name=item["_function_name"],
+                                    response={"result": item["content"]},
+                                )
                             ))
                     if parts:
-                        contents.append(types.Content(role="user", parts=parts))
+                        contents.append(genai.protos.Content(role="user", parts=parts))
             elif role == "model":
                 if isinstance(content, list):
                     parts = []
                     for item in content:
                         if isinstance(item, dict) and item.get("type") == "function_call":
-                            parts.append(types.Part.from_function_call(
-                                name=item["name"],
-                                args=item["args"],
+                            parts.append(genai.protos.Part(
+                                function_call=genai.protos.FunctionCall(
+                                    name=item["name"],
+                                    args=item["args"],
+                                )
                             ))
                         elif isinstance(item, dict) and item.get("type") == "text":
-                            parts.append(types.Part.from_text(text=item["text"]))
+                            parts.append(genai.protos.Part(text=item["text"]))
                     if parts:
-                        contents.append(types.Content(role="model", parts=parts))
+                        contents.append(genai.protos.Content(role="model", parts=parts))
                 elif isinstance(content, str) and content:
-                    contents.append(types.Content(
+                    contents.append(genai.protos.Content(
                         role="model",
-                        parts=[types.Part.from_text(text=content)],
+                        parts=[genai.protos.Part(text=content)],
                     ))
         return contents
 
     def chat(self, system: str, messages: list, tools: list) -> tuple[str, list[ToolCall]]:
+        genai = self._genai
         gemini_tools = self._build_tools(tools)
         contents = self._build_contents(messages)
 
-        response = self._client.models.generate_content(
-            model=self.model_name,
-            contents=contents,
-            config=self._types.GenerateContentConfig(
-                system_instruction=system,
-                tools=gemini_tools,
-            ),
+        # Recreate model with system instruction for this call
+        model = genai.GenerativeModel(
+            model_name=self.model_name,
+            system_instruction=system if system else None,
+            tools=gemini_tools,
         )
+        response = model.generate_content(contents)
 
         text = ""
         tool_calls = []
@@ -277,6 +283,6 @@ def get_provider(provider_name: str, api_key: str, model: str = "") -> LLMProvid
     if provider_name == "anthropic":
         return AnthropicProvider(api_key=api_key, model=model or "claude-sonnet-4-20250514")
     elif provider_name == "gemini":
-        return GeminiProvider(api_key=api_key, model=model or "gemini-2.5-pro")
+        return GeminiProvider(api_key=api_key, model=model or "gemini-2.0-flash")
     else:
         raise ValueError(f"Unknown LLM provider: {provider_name}. Use 'anthropic' or 'gemini'.")

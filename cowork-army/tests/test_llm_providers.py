@@ -77,7 +77,7 @@ class TestGetProvider:
 
     def test_gemini_provider(self):
         mock_genai = MagicMock()
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": mock_genai, "google.genai.types": MagicMock()}):
+        with patch.dict("sys.modules", {"google": MagicMock(), "google.generativeai": mock_genai}):
             p = get_provider("gemini", api_key="gk-test")
         assert p.__class__.__name__ == "GeminiProvider"
 
@@ -182,7 +182,7 @@ class TestAnthropicProvider:
 class TestGeminiProvider:
     def _make_provider(self):
         mock_genai = MagicMock()
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": mock_genai, "google.genai.types": MagicMock()}):
+        with patch.dict("sys.modules", {"google": MagicMock(), "google.generativeai": mock_genai}):
             from llm_providers import GeminiProvider
             p = GeminiProvider(api_key="gk-test")
         return p, mock_genai
