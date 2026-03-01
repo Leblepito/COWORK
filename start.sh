@@ -1,27 +1,60 @@
 #!/bin/bash
+# COWORK.ARMY v7.0 — Local Development Start Script
+# Usage: ./start.sh
 set -e
 
-BACKEND_PORT=${BACKEND_PORT:-8888}
-FRONTEND_PORT=${PORT:-3333}
+echo "=== COWORK.ARMY v7.0 ==="
+echo "Starting local development environment..."
 
-# Start backend (FastAPI) in background
-cd /app/cowork-army
-PORT=$BACKEND_PORT python server.py &
+# 1. Start PostgreSQL via Docker
+echo "[1/4] PostgreSQL..."
+docker compose up -d postgres
+echo "  Waiting for PostgreSQL..."
+sleep 3
+
+# 2. Backend setup
+echo "[2/4] Backend..."
+cd backend
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+fi
+source .venv/bin/activate
+pip install -q -r requirements.txt
+
+# Run migrations
+export DATABASE_URL="postgresql+asyncpg://cowork:cowork_local_2024@localhost:5433/cowork"
+alembic upgrade head 2>/dev/null || echo "  Migration skipped (may need DB)"
+
+# Start backend in background
+PORT=8888 python -m uvicorn main:app --host 0.0.0.0 --port 8888 --reload &
 BACKEND_PID=$!
+cd ..
 
-# Wait for backend to be ready
-echo "Waiting for backend on port $BACKEND_PORT..."
-for i in $(seq 1 30); do
-    if python -c "import urllib.request; urllib.request.urlopen('http://localhost:${BACKEND_PORT}/api/info')" 2>/dev/null; then
-        echo "Backend is ready!"
+# 3. Wait for backend
+echo "[3/4] Waiting for backend..."
+for i in $(seq 1 15); do
+    if curl -s http://localhost:8888/api/info > /dev/null 2>&1; then
+        echo "  Backend ready!"
         break
-    fi
-    if [ $i -eq 30 ]; then
-        echo "WARNING: Backend did not respond within 30s, starting frontend anyway..."
     fi
     sleep 1
 done
 
-# Start frontend (Next.js) in foreground
-cd /app/cowork-army/frontend
-exec npx next start --port $FRONTEND_PORT
+# 4. Frontend
+echo "[4/4] Frontend..."
+cd frontend
+npm install --legacy-peer-deps 2>/dev/null
+npm run dev &
+FRONTEND_PID=$!
+cd ..
+
+echo ""
+echo "=== COWORK.ARMY v7.0 RUNNING ==="
+echo "  Frontend:  http://localhost:3333"
+echo "  Backend:   http://localhost:8888"
+echo "  PostgreSQL: localhost:5433"
+echo ""
+echo "Press Ctrl+C to stop all services"
+
+trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; docker compose stop postgres; exit" SIGINT SIGTERM
+wait

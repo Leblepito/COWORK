@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  # ═══ PostgreSQL 16 ═══
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: cowork
+      POSTGRES_USER: cowork
+      POSTGRES_PASSWORD: cowork_local_2024
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cowork -d cowork"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ═══ Backend (FastAPI) ═══
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cowork:cowork_local_2024@postgres:5432/cowork
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      PORT: "8888"
+      CLAUDE_MODEL: claude-sonnet-4-20250514
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/workspace:/app/workspace
+
+  # ═══ Frontend (Next.js) ═══
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_COWORK_API_URL: http://localhost:8888/api
+    restart: unless-stopped
+    ports:
+      - "3333:3333"
+    environment:
+      PORT: "3333"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

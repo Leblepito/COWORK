@@ -1,14 +1,14 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Copy package files
-COPY cowork-army/frontend/package.json cowork-army/frontend/package-lock.json* ./
+# Copy package files from frontend/
+COPY frontend/package.json frontend/package-lock.json* ./
 
 # Install dependencies
 RUN npm install --legacy-peer-deps
 
 # Copy frontend source
-COPY cowork-army/frontend/ .
+COPY frontend/ .
 
 # Next.js needs NEXT_PUBLIC_* env vars at build time
 ARG NEXT_PUBLIC_COWORK_API_URL
