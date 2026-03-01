@@ -17,6 +17,9 @@ if config.config_file_name is not None:
 
 # Override URL from environment if available
 url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+# Railway gives postgresql:// but asyncpg needs postgresql+asyncpg://
+if url.startswith("postgresql://"):
+    url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
 config.set_main_option("sqlalchemy.url", url)
 
 # Import models so Alembic knows about them
