@@ -5,10 +5,15 @@ import os
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-DATABASE_URL = os.environ.get(
+_raw_url = os.environ.get(
     "DATABASE_URL",
     "postgresql+asyncpg://cowork:cowork@localhost:5433/cowork_army",
 )
+# Railway gives postgresql:// but asyncpg needs postgresql+asyncpg://
+if _raw_url.startswith("postgresql://"):
+    DATABASE_URL = _raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+else:
+    DATABASE_URL = _raw_url
 
 engine = create_async_engine(DATABASE_URL, pool_size=10, echo=False)
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
