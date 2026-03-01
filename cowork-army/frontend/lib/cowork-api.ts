@@ -140,11 +140,27 @@ export async function commanderDelegate(
 }
 
 // ── Settings ──
-export const getApiKeyStatus = () => coworkFetch<{ has_key?: boolean; set?: boolean; preview: string }>("/settings/api-key-status");
-export async function saveApiKey(key: string): Promise<{ status: string; masked?: string; preview?: string }> {
+export interface ApiKeyStatus {
+  set: boolean;
+  preview: string;
+  active_provider: string;
+  anthropic: { set: boolean; preview: string };
+  gemini: { set: boolean; preview: string };
+}
+export const getApiKeyStatus = () => coworkFetch<ApiKeyStatus>("/settings/api-key-status");
+export async function saveApiKey(key: string, provider: string = "anthropic"): Promise<{ status: string; provider: string; preview: string }> {
   const fd = new FormData();
-  fd.append("api_key", key);
+  fd.append("key", key);
+  fd.append("provider", provider);
   const res = await fetch(`${BASE}/settings/api-key`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+export const getLlmProvider = () => coworkFetch<{ provider: string }>("/settings/llm-provider");
+export async function setLlmProvider(provider: string): Promise<{ status: string; provider: string }> {
+  const fd = new FormData();
+  fd.append("provider", provider);
+  const res = await fetch(`${BASE}/settings/llm-provider`, { method: "POST", body: fd });
   if (!res.ok) throw new Error(`API error ${res.status}`);
   return res.json();
 }

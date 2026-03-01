@@ -1,83 +1,20 @@
 """
-COWORK.ARMY — Agent Runner (Claude API lifecycle)
-spawn → read workspace → Claude API (with tool_use) → write output → done/error
+COWORK.ARMY — Agent Runner (Multi-LLM lifecycle)
+spawn → read workspace → LLM API (with tool_use) → write output → done/error
+Supports: Anthropic (Claude), Google (Gemini)
 
 DB calls from threads use _sync_db() to bridge async→sync via the main event loop.
 """
 import os, json, asyncio, threading
 from pathlib import Path
 from datetime import datetime
-from anthropic import Anthropic
 from database import get_db
 from database.connection import get_event_loop
 from tools import read_file, write_file, list_dir, search_files, run_command
+from llm_providers import get_provider, TOOL_DEFS
 
-MODEL = "claude-sonnet-4-20250514"
-MAX_TOKENS = 4096
 MAX_TOOL_ROUNDS = 10
 WORKSPACE = Path(__file__).parent / "workspace"
-
-# Claude API tool definitions (proper schema format)
-CLAUDE_TOOLS = [
-    {
-        "name": "read_file",
-        "description": "Read a file from agent workspace or project directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path (relative to workspace or absolute)"}
-            },
-            "required": ["path"]
-        }
-    },
-    {
-        "name": "write_file",
-        "description": "Write content to a file in agent's workspace.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path relative to workspace"},
-                "content": {"type": "string", "description": "File content to write"}
-            },
-            "required": ["path", "content"]
-        }
-    },
-    {
-        "name": "list_dir",
-        "description": "List files and directories in a directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Directory path (empty string for workspace root)"}
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "search_files",
-        "description": "Search for files matching a glob pattern.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "pattern": {"type": "string", "description": "Glob pattern like *.py or *.md"},
-                "directory": {"type": "string", "description": "Search directory (empty for workspace root)"}
-            },
-            "required": ["pattern"]
-        }
-    },
-    {
-        "name": "run_command",
-        "description": "Run a shell command (limited to safe commands: ls, cat, head, tail, grep, find, python3, node, npm, git status/log/diff).",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "Shell command to run"},
-                "cwd": {"type": "string", "description": "Working directory (empty for workspace root)"}
-            },
-            "required": ["command"]
-        }
-    },
-]
 
 
 def _sync_db(coro):
@@ -110,15 +47,28 @@ class AgentProc:
 PROCS: dict[str, AgentProc] = {}
 
 
-def _get_api_key() -> str:
-    k = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not k:
+def _read_env_value(key: str) -> str:
+    """Read a value from environment or .env file."""
+    v = os.environ.get(key, "")
+    if not v:
         env = Path(__file__).parent / ".env"
         if env.exists():
             for line in env.read_text().splitlines():
-                if line.startswith("ANTHROPIC_API_KEY="):
-                    k = line.split("=", 1)[1].strip().strip('"')
-    return k
+                if line.startswith(f"{key}="):
+                    v = line.split("=", 1)[1].strip().strip('"')
+    return v
+
+
+def _get_llm_config() -> tuple[str, str, str]:
+    """Return (provider_name, api_key, model) from env."""
+    provider = _read_env_value("LLM_PROVIDER") or "anthropic"
+    if provider == "gemini":
+        api_key = _read_env_value("GOOGLE_API_KEY")
+        model = _read_env_value("GEMINI_MODEL") or ""
+    else:
+        api_key = _read_env_value("ANTHROPIC_API_KEY")
+        model = _read_env_value("ANTHROPIC_MODEL") or ""
+    return provider, api_key, model
 
 
 def _workspace_context(agent_id: str) -> str:
@@ -170,12 +120,15 @@ def _run(proc: AgentProc, task: str):
         proc.status = "error"; proc.log("Agent not found"); return
 
     proc.status = "thinking"
-    proc.log(f"Claude API baglaniyor ({MODEL})")
 
-    key = _get_api_key()
-    if not key:
+    provider_name, api_key, model = _get_llm_config()
+    provider_label = "Gemini" if provider_name == "gemini" else "Claude"
+    proc.log(f"{provider_label} API baglaniyor ({model or 'default'})")
+
+    if not api_key:
+        key_name = "GOOGLE_API_KEY" if provider_name == "gemini" else "ANTHROPIC_API_KEY"
         proc.status = "error"
-        proc.log("ANTHROPIC_API_KEY bulunamadi!")
+        proc.log(f"{key_name} bulunamadi!")
         proc.log("Dashboard'dan API Key girin veya .env dosyasina ekleyin")
         return
 
@@ -195,7 +148,7 @@ Isini bitirdiginde sonucu ozetle."""
     proc.status = "working"
 
     try:
-        client = Anthropic(api_key=key)
+        provider = get_provider(provider_name, api_key, model)
         messages = [{"role": "user", "content": user_msg}]
         collected_text = ""
 
@@ -203,28 +156,18 @@ Isini bitirdiginde sonucu ozetle."""
             if proc.status == "done":
                 break  # killed externally
 
-            response = client.messages.create(
-                model=MODEL, max_tokens=MAX_TOKENS, system=sys_prompt,
-                messages=messages, tools=CLAUDE_TOOLS,
-            )
+            text, tool_calls = provider.chat(sys_prompt, messages, TOOL_DEFS)
 
-            # Process response content blocks
-            assistant_content = []
-            tool_calls = []
+            if text:
+                collected_text += text
+                preview = text[:80].replace('\n', ' ')
+                proc.log(f"  {preview}")
 
-            for block in response.content:
-                if block.type == "text":
-                    collected_text += block.text
-                    preview = block.text[:80].replace('\n', ' ')
-                    proc.log(f"  {preview}")
-                    assistant_content.append(block)
-                elif block.type == "tool_use":
-                    tool_calls.append(block)
-                    assistant_content.append(block)
-                    proc.log(f"  Tool: {block.name}({json.dumps(block.input, ensure_ascii=False)[:60]})")
+            for tc in tool_calls:
+                proc.log(f"  Tool: {tc.name}({json.dumps(tc.input, ensure_ascii=False)[:60]})")
 
-            # Add assistant message
-            messages.append({"role": "assistant", "content": assistant_content})
+            # Add assistant message to history
+            messages.append(provider.format_assistant_message(text, tool_calls))
 
             # If no tool calls, we're done
             if not tool_calls:
@@ -237,12 +180,7 @@ Isini bitirdiginde sonucu ozetle."""
             for tc in tool_calls:
                 proc.log(f"  Tool calistiriliyor: {tc.name}")
                 result_str = _execute_tool(proc.agent_id, tc.name, tc.input)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tc.id,
-                    "content": result_str,
-                })
-                # Log result preview
+                tool_results.append(provider.format_tool_result(tc, result_str))
                 preview = result_str[:80].replace('\n', ' ')
                 proc.log(f"    Sonuc: {preview}")
 

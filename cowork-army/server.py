@@ -210,27 +210,77 @@ async def api_auto_events(limit: int = 50, since: str = ""):
     return await db.get_events(limit, since)
 
 # ══════════════ SETTINGS ══════════════
+
+def _read_env_file() -> dict[str, str]:
+    """Read all key=value pairs from .env file."""
+    env = BASE / ".env"
+    result = {}
+    if env.exists():
+        for line in env.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                result[k.strip()] = v.strip().strip('"')
+    return result
+
+def _write_env_file(updates: dict[str, str]):
+    """Update .env file with given key=value pairs, preserving other lines."""
+    env = BASE / ".env"
+    existing = {}
+    other_lines = []
+    if env.exists():
+        for line in env.read_text().splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                k = stripped.split("=", 1)[0].strip()
+                existing[k] = line
+            else:
+                other_lines.append(line)
+    for k, v in updates.items():
+        existing[k] = f"{k}={v}"
+        os.environ[k] = v
+    all_lines = other_lines + list(existing.values())
+    env.write_text("\n".join(all_lines) + "\n")
+
+def _get_env_value(key: str) -> str:
+    v = os.environ.get(key, "")
+    if not v:
+        v = _read_env_file().get(key, "")
+    return v
+
 @app.get("/api/settings/api-key-status")
 async def api_key_status():
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not key:
-        env = BASE / ".env"
-        if env.exists():
-            for line in env.read_text().splitlines():
-                if line.startswith("ANTHROPIC_API_KEY=") and line.split("=", 1)[1].strip():
-                    key = line.split("=", 1)[1].strip()
-    return {"set": bool(key), "preview": (key[:12] + "...") if key else ""}
+    anthropic_key = _get_env_value("ANTHROPIC_API_KEY")
+    google_key = _get_env_value("GOOGLE_API_KEY")
+    active_provider = _get_env_value("LLM_PROVIDER") or "anthropic"
+    return {
+        "set": bool(anthropic_key) if active_provider == "anthropic" else bool(google_key),
+        "preview": (anthropic_key[:12] + "...") if anthropic_key else "",
+        "active_provider": active_provider,
+        "anthropic": {"set": bool(anthropic_key), "preview": (anthropic_key[:12] + "...") if anthropic_key else ""},
+        "gemini": {"set": bool(google_key), "preview": (google_key[:12] + "...") if google_key else ""},
+    }
 
 @app.post("/api/settings/api-key")
-async def api_set_key(key: str = Form(...)):
-    env = BASE / ".env"
-    lines = []
-    if env.exists():
-        lines = [l for l in env.read_text().splitlines() if not l.startswith("ANTHROPIC_API_KEY=")]
-    lines.append(f"ANTHROPIC_API_KEY={key}")
-    env.write_text("\n".join(lines) + "\n")
-    os.environ["ANTHROPIC_API_KEY"] = key
-    return {"status": "saved", "preview": key[:12] + "..."}
+async def api_set_key(key: str = Form(...), provider: str = Form("anthropic")):
+    if provider == "gemini":
+        env_key = "GOOGLE_API_KEY"
+    else:
+        env_key = "ANTHROPIC_API_KEY"
+    _write_env_file({env_key: key})
+    return {"status": "saved", "provider": provider, "preview": key[:12] + "..."}
+
+@app.get("/api/settings/llm-provider")
+async def api_get_provider():
+    provider = _get_env_value("LLM_PROVIDER") or "anthropic"
+    return {"provider": provider}
+
+@app.post("/api/settings/llm-provider")
+async def api_set_provider(provider: str = Form(...)):
+    if provider not in ("anthropic", "gemini"):
+        return JSONResponse({"error": "Invalid provider. Use 'anthropic' or 'gemini'."}, 400)
+    _write_env_file({"LLM_PROVIDER": provider})
+    return {"status": "saved", "provider": provider}
 
 # ══════════════ WORKSPACE ══════════════
 @app.get("/api/workspace/{agent_id}")
