@@ -11,13 +11,12 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install Node.js 20 + libatomic1 (required by Node.js on slim images)
+# Copy Node.js from build stage (avoids nodesource dependency)
+COPY --from=frontend-build /usr/local/bin/node /usr/local/bin/node
+
+# Install libatomic1 (required by Node.js on slim images)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs libatomic1 && \
-    apt-get purge -y curl && \
-    apt-get autoremove -y && \
+    apt-get install -y --no-install-recommends libatomic1 && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

@@ -470,4 +470,5 @@ def _agent_to_frontend(agent: dict) -> dict:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("server:app", host="0.0.0.0", port=8888, reload=True)
+    dev_mode = os.getenv("NODE_ENV") != "production"
+    uvicorn.run("server:app", host="0.0.0.0", port=8888, reload=dev_mode)
