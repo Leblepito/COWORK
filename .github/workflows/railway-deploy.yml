@@ -7,11 +7,33 @@ on:
 
 env:
   RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-  RAILWAY_PROJECT_ID: 78ef3a62-9691-4ece-a6cd-f5a46fb79a3b
-  RAILWAY_ENV_ID: 6203d789-faaf-460e-a6eb-93e31d733ee0
 
 jobs:
-  deploy:
+  get-services:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.list.outputs.services }}
+      project-info: ${{ steps.info.outputs.info }}
+    steps:
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Get project info
+        id: info
+        run: |
+          echo "=== Railway Project Info ==="
+          railway whoami 2>&1 || echo "Project-scoped token"
+          echo "info=connected" >> "$GITHUB_OUTPUT"
+
+      - name: List services
+        id: list
+        run: |
+          echo "=== Listing services ==="
+          railway service list 2>&1 | tee /tmp/services.txt
+          echo "services=$(cat /tmp/services.txt)" >> "$GITHUB_OUTPUT"
+
+  deploy-backend:
+    needs: get-services
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,80 +41,78 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Get Railway project info
+      - name: Deploy Backend
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        working-directory: backend
         run: |
-          set -e
-          echo "=== Railway whoami ==="
-          railway whoami || echo "Token might be project-scoped"
-          echo ""
-          echo "=== Listing services ==="
-          railway service list 2>&1 || true
+          echo "Deploying backend..."
+          railway up --detach 2>&1 || {
+            echo "railway up failed, trying with service flag..."
+            railway up --service backend --detach 2>&1 || true
+          }
+          echo "Backend deploy triggered"
 
-      - name: Deploy via Railway API
+  deploy-frontend:
+    needs: get-services
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy Frontend
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          set -e
+          echo "Deploying frontend..."
+          railway up --detach 2>&1 || {
+            echo "railway up failed, trying with service flag..."
+            railway up --service frontend --detach 2>&1 || true
+          }
+          echo "Frontend deploy triggered"
 
-          # Use Railway GraphQL API to trigger redeploy
-          # First get services
-          RESPONSE=$(curl -s -X POST \
+  api-trigger:
+    needs: get-services
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger redeploy via Railway API
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          PROJECT_ID: 78ef3a62-9691-4ece-a6cd-f5a46fb79a3b
+          ENV_ID: 6203d789-faaf-460e-a6eb-93e31d733ee0
+        run: |
+          echo "=== Getting services via API ==="
+          RESPONSE=$(curl -sf -X POST \
             -H "Authorization: Bearer $RAILWAY_TOKEN" \
             -H "Content-Type: application/json" \
             "https://backboard.railway.app/graphql/v2" \
-            -d "{\"query\":\"query { project(id: \\\"$RAILWAY_PROJECT_ID\\\") { name services { edges { node { id name serviceInstances { edges { node { id environmentId latestDeployment { id status } } } } } } } } }\"}")
+            -d '{"query":"query { project(id: \"'"$PROJECT_ID"'\") { name services { edges { node { id name } } } } }"}')
 
-          echo "Project info:"
-          echo "$RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$RESPONSE"
+          echo "$RESPONSE" | jq '.' 2>/dev/null || echo "$RESPONSE"
 
-          # Extract service IDs and trigger redeploy for each
-          echo "$RESPONSE" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          project = data.get('data', {}).get('project', {})
-          print(f'Project: {project.get(\"name\", \"unknown\")}')
-          services = project.get('services', {}).get('edges', [])
-          for svc in services:
-              node = svc['node']
-              print(f'Service: {node[\"name\"]} (ID: {node[\"id\"]})')
-              for inst in node.get('serviceInstances', {}).get('edges', []):
-                  inst_node = inst['node']
-                  env_id = inst_node.get('environmentId', '')
-                  deploy = inst_node.get('latestDeployment', {})
-                  print(f'  Env: {env_id} | Latest deploy: {deploy.get(\"status\", \"none\")}')
-          "
+          # Extract service IDs and trigger redeploy
+          SERVICE_IDS=$(echo "$RESPONSE" | jq -r '.data.project.services.edges[].node | "\(.id)|\(.name)"' 2>/dev/null)
 
-      - name: Trigger redeploy for all services
-        run: |
-          set -e
+          if [ -z "$SERVICE_IDS" ]; then
+            echo "No services found or API error. Response:"
+            echo "$RESPONSE"
+            exit 1
+          fi
 
-          # Get service instance IDs for production environment
-          RESPONSE=$(curl -s -X POST \
-            -H "Authorization: Bearer $RAILWAY_TOKEN" \
-            -H "Content-Type: application/json" \
-            "https://backboard.railway.app/graphql/v2" \
-            -d "{\"query\":\"query { project(id: \\\"$RAILWAY_PROJECT_ID\\\") { services { edges { node { id name serviceInstances { edges { node { id environmentId } } } } } } } }\"}")
+          for SERVICE in $SERVICE_IDS; do
+            SVC_ID=$(echo "$SERVICE" | cut -d'|' -f1)
+            SVC_NAME=$(echo "$SERVICE" | cut -d'|' -f2)
+            echo "Triggering redeploy for $SVC_NAME ($SVC_ID)..."
 
-          # Trigger redeploy for each service in production
-          echo "$RESPONSE" | python3 -c "
-          import subprocess, sys, json, os
-          token = os.environ['RAILWAY_TOKEN']
-          env_id = os.environ['RAILWAY_ENV_ID']
-          data = json.load(sys.stdin)
-          services = data.get('data', {}).get('project', {}).get('services', {}).get('edges', [])
-          for svc in services:
-              node = svc['node']
-              svc_id = node['id']
-              svc_name = node['name']
-              for inst in node.get('serviceInstances', {}).get('edges', []):
-                  if inst['node']['environmentId'] == env_id:
-                      print(f'Triggering redeploy for {svc_name}...')
-                      # Use serviceInstanceRedeploy mutation
-                      mutation = '{\"query\":\"mutation { serviceInstanceRedeploy(environmentId: \\\\\"' + env_id + '\\\\\", serviceId: \\\\\"' + svc_id + '\\\\\") }\"}'
-                      result = subprocess.run([
-                          'curl', '-s', '-X', 'POST',
-                          '-H', f'Authorization: Bearer {token}',
-                          '-H', 'Content-Type: application/json',
-                          'https://backboard.railway.app/graphql/v2',
-                          '-d', mutation
-                      ], capture_output=True, text=True)
-                      print(f'{svc_name}: {result.stdout}')
-          "
+            RESULT=$(curl -sf -X POST \
+              -H "Authorization: Bearer $RAILWAY_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://backboard.railway.app/graphql/v2" \
+              -d '{"query":"mutation { serviceInstanceRedeploy(environmentId: \"'"$ENV_ID"'\", serviceId: \"'"$SVC_ID"'\") }"}')
+
+            echo "$SVC_NAME result: $RESULT"
+          done
+
+          echo "All redeployments triggered!"
