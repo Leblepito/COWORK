@@ -18,6 +18,8 @@ import {
     getAgentOutput,
     createAgent,
     deleteAgent,
+    createCoworkAgent,
+    deleteCoworkAgent,
     getCoworkTasks,
     createCoworkTask,
     updateCoworkTaskStatus,
@@ -340,5 +342,63 @@ describe("Server Info & Settings", () => {
         await saveApiKey("sk-ant-api03-test-key");
         const fd = mockFetch.mock.calls[0][1].body as FormData;
         expect(fd.get("api_key")).toBe("sk-ant-api03-test-key");
+    });
+});
+
+// ═══════════════════════════════════════════════════════════
+//  DYNAMIC AGENT ENDPOINTS (createCoworkAgent / deleteCoworkAgent)
+// ═══════════════════════════════════════════════════════════
+
+describe("Dynamic Agent Endpoints", () => {
+    it("createCoworkAgent sends FormData with all fields", async () => {
+        mockFetch.mockResolvedValue(mockJsonResponse({ status: "created", agent_id: "seo-expert" }));
+
+        await createCoworkAgent(
+            "seo-expert", "SEO Expert", "🔍", "SEO & Content",
+            "Handles SEO tasks", "seo,content", "rule1", "trigger1", "You are SEO expert."
+        );
+
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe("/api/agents");
+        expect(options.method).toBe("POST");
+        expect(options.body).toBeInstanceOf(FormData);
+
+        const fd = options.body as FormData;
+        expect(fd.get("agent_id")).toBe("seo-expert");
+        expect(fd.get("name")).toBe("SEO Expert");
+        expect(fd.get("icon")).toBe("🔍");
+        expect(fd.get("domain")).toBe("SEO & Content");
+        expect(fd.get("desc")).toBe("Handles SEO tasks");
+        expect(fd.get("skills")).toBe("seo,content");
+        expect(fd.get("system_prompt")).toBe("You are SEO expert.");
+    });
+
+    it("createCoworkAgent throws on error", async () => {
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 400,
+            text: () => Promise.resolve("Bad request"),
+        });
+
+        await expect(
+            createCoworkAgent("bad", "Bad", "🤖", "", "", "", "", "", "")
+        ).rejects.toThrow("API error 400");
+    });
+
+    it("deleteCoworkAgent sends DELETE via coworkFetch", async () => {
+        mockFetch.mockResolvedValue(mockJsonResponse({ deleted: true }));
+
+        const result = await deleteCoworkAgent("my-agent");
+        expect(result.deleted).toBe(true);
+        expect(mockFetch).toHaveBeenCalledWith(
+            "/api/agents/my-agent",
+            expect.objectContaining({ method: "DELETE" })
+        );
+    });
+
+    it("deleteCoworkAgent throws on error", async () => {
+        mockFetch.mockResolvedValue(mockJsonResponse({ error: "forbidden" }, 403));
+
+        await expect(deleteCoworkAgent("commander")).rejects.toThrow("Cowork API error 403");
     });
 });

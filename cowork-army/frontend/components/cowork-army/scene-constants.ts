@@ -113,3 +113,51 @@ export const STATUS_COLORS: Record<string, string> = {
   error: "#ef4444",
   done: "#22c55e",
 };
+
+/* ── Dynamic Agent Positioning ── */
+
+const DYN_START_X = -2;
+const DYN_START_Z = 2;
+const DYN_COLS = 3;
+const DYN_SPACING = 2.5;
+
+/** Calculate desk position for a dynamic agent by its index. */
+export function calculateDynamicDeskPosition(index: number): [number, number, number] {
+  const col = index % DYN_COLS;
+  const row = Math.floor(index / DYN_COLS);
+  return [DYN_START_X + col * DYN_SPACING, 0, DYN_START_Z + row * DYN_SPACING];
+}
+
+/** Build a complete desk position map: base agents use DESK_POSITIONS, others get dynamic positions. */
+export function buildAllDeskPositions(agentIds: string[]): Record<string, [number, number, number]> {
+  const result: Record<string, [number, number, number]> = {};
+  let dynIndex = 0;
+  for (const id of agentIds) {
+    if (DESK_POSITIONS[id]) {
+      result[id] = DESK_POSITIONS[id];
+    } else {
+      result[id] = calculateDynamicDeskPosition(dynIndex);
+      dynIndex++;
+    }
+  }
+  return result;
+}
+
+/** Get a zone definition for dynamic agents. Returns null if no dynamic agents. */
+export function getDynamicZone(dynamicIds: string[]): ZoneDefinition | null {
+  if (dynamicIds.length === 0) return null;
+  const rows = Math.ceil(dynamicIds.length / DYN_COLS);
+  const width = DYN_COLS * DYN_SPACING;
+  const height = rows * DYN_SPACING;
+  const cx = DYN_START_X + (width - DYN_SPACING) / 2;
+  const cz = DYN_START_Z + (height - DYN_SPACING) / 2;
+  return {
+    id: "dynamic",
+    label: "DYNAMIC AGENTS",
+    color: "#64748b",
+    center: [cx, 0, cz],
+    size: [width, height],
+    agents: dynamicIds,
+    bounds: [cx - width / 2, cz - height / 2, cx + width / 2, cz + height / 2],
+  };
+}
