@@ -8,7 +8,7 @@ import dynamic from "next/dynamic";
 import type { CoworkAgent, AgentStatus, CoworkTask, AutonomousEvent, AutonomousStatus, ServerInfo, ApiKeyStatus } from "@/lib/cowork-api";
 import { getCoworkAgents, getAgentStatuses, getAutonomousEvents, getAutonomousStatus,
   getServerInfo, spawnAgent, killAgent, startAutonomousLoop, stopAutonomousLoop,
-  createCoworkTask, createCoworkAgent, deleteCoworkAgent,
+  createCoworkTask, createAgent, deleteAgent,
   getApiKeyStatus, saveApiKey, setLlmProvider } from "@/lib/cowork-api";
 import { AGENT_DEPARTMENT, DEPT_COLORS } from "@/components/cowork-army/scene-constants";
 
@@ -173,7 +173,7 @@ export default function Home() {
                 <button onClick={() => killAgent(selAgent.id)} className="text-[8px] px-2 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/30 font-bold">⏹ Durdur</button>
                 {!selAgent.is_base && (
                   <button onClick={async () => {
-                    await deleteCoworkAgent(selAgent.id);
+                    await deleteAgent(selAgent.id);
                     setSelected(null);
                     fetchAll();
                   }} className="text-[8px] px-2 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/30 font-bold">🗑 Sil</button>
@@ -422,7 +422,11 @@ function AgentModal({ onClose }: { onClose: () => void }) {
 
   const submit = async () => {
     if (!agentId || !name) return;
-    await createCoworkAgent(agentId, name, icon || "\u{1F916}", domain, desc, skills, "", "", systemPrompt);
+    await createAgent({
+      id: agentId, name, icon: icon || "\u{1F916}", tier: "WORKER", color: "#818cf8",
+      domain, desc, skills: skills.split(",").map(s => s.trim()).filter(Boolean),
+      rules: [], triggers: [], workspace_dir: agentId, system_prompt: systemPrompt,
+    });
     onClose();
   };
 
