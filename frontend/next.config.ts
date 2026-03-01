@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
-const coworkUrl = process.env.COWORK_API_URL || "http://localhost:8888";
+// COWORK_API_URL: backend URL for server-side rewrites
+// Railway: set to internal backend service URL (e.g. http://backend.railway.internal:8888)
+// Fallback: derive from NEXT_PUBLIC_COWORK_API_URL by stripping /api suffix
+const coworkUrl = process.env.COWORK_API_URL
+    || process.env.NEXT_PUBLIC_COWORK_API_URL?.replace(/\/api$/, "")
+    || "http://localhost:8888";
 
 const nextConfig: NextConfig = {
     output: "standalone",
