@@ -64,7 +64,11 @@ class AutonomousLoop:
                     t = json.loads(tasks[0].read_text())
                     await db.add_event(aid, f"Inbox'ta görev bulundu: {t.get('title', '?')[:50]}", "inbox_check")
                     await spawn_agent(aid, f"{t['title']}: {t.get('description', '')}")
-                except: pass
+                except Exception as e:
+                    try:
+                        await db.add_event(aid, f"Inbox parse hatası: {e}", "warning")
+                    except:
+                        pass
 
     async def status(self) -> dict:
         db = get_db()

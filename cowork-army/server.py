@@ -240,8 +240,9 @@ async def dashboard():
 if __name__ == "__main__":
     import sys, io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    port = int(os.environ.get("PORT", 8888))
     print("=" * 50)
     print("  COWORK.ARMY v6.0 -- Command Center")
-    print("  http://localhost:8888")
+    print(f"  http://localhost:{port}")
     print("=" * 50)
-    uvicorn.run(app, host="0.0.0.0", port=8888)
+    uvicorn.run(app, host="0.0.0.0", port=port)

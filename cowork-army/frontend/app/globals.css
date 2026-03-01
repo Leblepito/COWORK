@@ -1,8 +1,12 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-mono: 'JetBrains Mono', monospace;
+  --color-cowork-bg: #060710;
+  --color-cowork-surface: #0b0c14;
+  --color-cowork-border: #1a1f30;
+}
 
 :root {
   --bg: #060710;
@@ -29,3 +33,8 @@ body {
 }
 
 .pulse-dot { animation: pulse-dot 1.5s infinite; }
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
