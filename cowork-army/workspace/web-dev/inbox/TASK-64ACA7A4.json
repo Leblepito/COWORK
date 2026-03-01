@@ -1,0 +1,15 @@
+{
+  "id": "TASK-64ACA7A4",
+  "title": "Test websiteyi kontrol et",
+  "description": "Ana sayfa performance testi",
+  "assigned_to": "web-dev",
+  "priority": "normal",
+  "status": "pending",
+  "created_by": "commander",
+  "created_at": "2026-03-01T00:12:02.927146+00:00",
+  "updated_at": "2026-03-01T00:12:02.927146+00:00",
+  "log": [
+    "[00:12:02] Görev oluşturuldu",
+    "[00:12:02] Commander → web-dev"
+  ]
+}
