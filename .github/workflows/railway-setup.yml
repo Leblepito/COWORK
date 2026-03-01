@@ -1,0 +1,48 @@
+name: Railway Setup — Domain & Variables
+
+on:
+  workflow_dispatch:
+
+env:
+  RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Link project
+        run: |
+          # List linked project info
+          railway status || true
+
+      - name: Set COWORK_API_URL on frontend
+        run: |
+          railway variables set COWORK_API_URL="http://backend.railway.internal:8888" \
+            --service frontend --environment production || true
+          echo "✅ COWORK_API_URL set on frontend service"
+
+      - name: Add custom domain ireska.com to frontend
+        run: |
+          railway domain add ireska.com \
+            --service frontend --environment production || true
+          echo "✅ ireska.com domain added to frontend"
+
+      - name: Add www subdomain
+        run: |
+          railway domain add www.ireska.com \
+            --service frontend --environment production || true
+          echo "✅ www.ireska.com domain added to frontend"
+
+      - name: Verify domains
+        run: |
+          railway domain list --service frontend --environment production || true
+
+      - name: Redeploy frontend with new env vars
+        run: |
+          cd frontend
+          railway up --detach --service frontend --environment production
