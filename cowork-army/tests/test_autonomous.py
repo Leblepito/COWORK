@@ -1,34 +1,37 @@
 """
-Tests for autonomous.py — Autonomous Loop (MEDIUM)
-Start/stop, tick logic, event generation.
+Tests for autonomous.py — Autonomous Loop (v7)
+Start/stop, tick logic, async event generation.
 """
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-
+import json
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
 
 from autonomous import AutonomousLoop
-from runner import AgentProcess, AgentRunner
 
 
 # ── Fixtures ─────────────────────────────────────────────
 
 @pytest.fixture
-def mock_runner(seeded_db, tmp_path):
-    """Create a runner with mocked dependencies."""
-    runner = AgentRunner(
-        cowork_root=str(tmp_path),
-        anthropic_api_key="",
-        event_callback=lambda *a: None,
-        db=seeded_db,
-    )
-    return runner
+def mock_db():
+    db = AsyncMock()
+    db.get_all_agents.return_value = []
+    db.add_event.return_value = None
+    db.get_events.return_value = []
+    db.get_event_count.return_value = 0
+    return db
 
 
 @pytest.fixture
-def loop(mock_runner, seeded_db):
-    """Create an AutonomousLoop instance."""
-    return AutonomousLoop(runner=mock_runner, db=seeded_db)
+def loop_instance(mock_db):
+    """Create an AutonomousLoop with mocked DB."""
+    with patch("autonomous.get_db", return_value=mock_db):
+        loop = AutonomousLoop()
+        yield loop
+        # Ensure stopped
+        loop.running = False
+        if loop._task:
+            loop._task.cancel()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -36,35 +39,41 @@ def loop(mock_runner, seeded_db):
 # ═══════════════════════════════════════════════════════════
 
 class TestStartStop:
-    def test_initial_state(self, loop):
-        assert loop.running is False
-        assert loop.tick_count == 0
-        assert loop.last_tick is None
+    def test_initial_state(self, loop_instance):
+        assert loop_instance.running is False
+        assert loop_instance.tick_count == 0
+        assert loop_instance.last_tick is None
 
     @pytest.mark.asyncio
-    async def test_start(self, loop):
-        loop.start()
-        assert loop.running is True
-        assert loop._task is not None
-        loop.stop()
+    async def test_start(self, loop_instance, mock_db):
+        with patch("autonomous.get_db", return_value=mock_db):
+            await loop_instance.start()
+        assert loop_instance.running is True
+        assert loop_instance._task is not None
+        with patch("autonomous.get_db", return_value=mock_db):
+            await loop_instance.stop()
 
     @pytest.mark.asyncio
-    async def test_start_idempotent(self, loop):
-        loop.start()
-        task1 = loop._task
-        loop.start()  # Second start should be no-op
-        assert loop._task is task1
-        loop.stop()
+    async def test_start_idempotent(self, loop_instance, mock_db):
+        with patch("autonomous.get_db", return_value=mock_db):
+            await loop_instance.start()
+            task1 = loop_instance._task
+            await loop_instance.start()  # Second start should be no-op
+            assert loop_instance._task is task1
+            await loop_instance.stop()
 
     @pytest.mark.asyncio
-    async def test_stop(self, loop):
-        loop.start()
-        loop.stop()
-        assert loop.running is False
+    async def test_stop(self, loop_instance, mock_db):
+        with patch("autonomous.get_db", return_value=mock_db):
+            await loop_instance.start()
+            await loop_instance.stop()
+        assert loop_instance.running is False
 
-    def test_stop_idempotent(self, loop):
-        loop.stop()  # Stop without start
-        assert loop.running is False
+    @pytest.mark.asyncio
+    async def test_stop_idempotent(self, loop_instance, mock_db):
+        with patch("autonomous.get_db", return_value=mock_db):
+            await loop_instance.stop()  # Stop without start
+        assert loop_instance.running is False
 
 
 # ═══════════════════════════════════════════════════════════
@@ -73,106 +82,77 @@ class TestStartStop:
 
 class TestTick:
     @pytest.mark.asyncio
-    async def test_tick_increments_counter(self, loop):
-        await loop._tick()
-        assert loop.tick_count == 1
-        assert loop.last_tick is not None
+    async def test_tick_increments_counter(self, loop_instance, mock_db):
+        mock_db.get_all_agents.return_value = []
+        with patch("autonomous.get_db", return_value=mock_db):
+            await loop_instance._tick()
+        assert loop_instance.tick_count == 1
+        assert loop_instance.last_tick is not None
 
     @pytest.mark.asyncio
-    async def test_tick_generates_idle_event(self, loop, seeded_db):
-        await loop._tick()
-        events = seeded_db.get_events(limit=5)
-        msgs = [e["message"] for e in events]
-        assert any("boşta" in m for m in msgs)
+    async def test_tick_checks_agents(self, loop_instance, mock_db):
+        mock_db.get_all_agents.return_value = [
+            {"id": "cargo", "workspace_dir": "cargo"},
+        ]
+        with patch("autonomous.get_db", return_value=mock_db), \
+             patch("autonomous.WORKSPACE", Path("/nonexistent")):
+            await loop_instance._tick()
+        assert loop_instance.tick_count == 1
 
     @pytest.mark.asyncio
-    async def test_tick_reports_alive_agents(self, loop, mock_runner, seeded_db):
-        # Mark an agent as alive
-        proc = mock_runner.processes["web-dev"]
-        proc.alive = True
-        await loop._tick()
-        events = seeded_db.get_events(limit=5)
-        msgs = [e["message"] for e in events]
-        assert any("web-dev" in m for m in msgs)
-        assert any("1 aktif" in m for m in msgs)
-        proc.alive = False
+    async def test_tick_spawns_agent_with_inbox_task(self, loop_instance, mock_db, tmp_path):
+        mock_db.get_all_agents.return_value = [
+            {"id": "full-stack", "workspace_dir": "full-stack"},
+        ]
+        # Create inbox with task file
+        inbox = tmp_path / "full-stack" / "inbox"
+        inbox.mkdir(parents=True)
+        task_file = inbox / "TASK-001.json"
+        task_file.write_text(json.dumps({"title": "Build page", "description": "React"}))
+
+        mock_spawn = AsyncMock(return_value={"status": "thinking"})
+
+        with patch("autonomous.get_db", return_value=mock_db), \
+             patch("autonomous.WORKSPACE", tmp_path), \
+             patch("autonomous.PROCS", {}), \
+             patch("autonomous.spawn_agent", mock_spawn):
+            await loop_instance._tick()
+
+        mock_spawn.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_tick_auto_spawns_pending_tasks(self, loop, mock_runner, seeded_db):
-        # Create a pending task assigned to web-dev
-        seeded_db.create_task("Auto Task", "Test", "web-dev", "medium")
+    async def test_tick_skips_alive_agent(self, loop_instance, mock_db, tmp_path):
+        mock_db.get_all_agents.return_value = [
+            {"id": "full-stack", "workspace_dir": "full-stack"},
+        ]
+        inbox = tmp_path / "full-stack" / "inbox"
+        inbox.mkdir(parents=True)
+        (inbox / "TASK-001.json").write_text(json.dumps({"title": "Test"}))
 
-        # Mock spawn to avoid real API calls
-        mock_runner.spawn = AsyncMock(return_value={"status": "thinking"})
+        alive_proc = MagicMock()
+        alive_proc.alive = True
 
-        await loop._tick()
+        mock_spawn = AsyncMock()
 
-        mock_runner.spawn.assert_called_once()
-        task = seeded_db.list_tasks()[0]
-        assert task["status"] == "in_progress"
+        with patch("autonomous.get_db", return_value=mock_db), \
+             patch("autonomous.WORKSPACE", tmp_path), \
+             patch("autonomous.PROCS", {"full-stack": alive_proc}), \
+             patch("autonomous.spawn_agent", mock_spawn):
+            await loop_instance._tick()
 
-    @pytest.mark.asyncio
-    async def test_tick_skips_alive_agents_for_spawn(self, loop, mock_runner, seeded_db):
-        seeded_db.create_task("Busy Task", "Test", "web-dev")
-        proc = mock_runner.processes["web-dev"]
-        proc.alive = True  # Already running
-
-        mock_runner.spawn = AsyncMock()
-        await loop._tick()
-
-        mock_runner.spawn.assert_not_called()
-        proc.alive = False
-
-    @pytest.mark.asyncio
-    async def test_tick_max_3_tasks_per_tick(self, loop, mock_runner, seeded_db):
-        # Create 5 pending tasks
-        for i in range(5):
-            seeded_db.create_task(f"Task {i}", "Test", "web-dev")
-
-        mock_runner.spawn = AsyncMock(return_value={"status": "thinking"})
-        await loop._tick()
-
-        # Only 3 should be spawned (but only 1 for web-dev since it's same agent)
-        # The loop checks proc.alive, so after first spawn it may skip
-        # Let's just verify it tried
-        assert mock_runner.spawn.call_count >= 1
-
-    @pytest.mark.asyncio
-    async def test_supervisor_inbox_every_5th_tick(self, loop, seeded_db):
-        for _ in range(5):
-            await loop._tick()
-        events = seeded_db.get_events(limit=20)
-        msgs = [e["message"] for e in events]
-        assert any("Inbox" in m for m in msgs)
-
-    @pytest.mark.asyncio
-    async def test_quant_lab_every_10th_tick(self, loop, seeded_db):
-        for _ in range(10):
-            await loop._tick()
-        events = seeded_db.get_events(limit=30)
-        msgs = [e["message"] for e in events]
-        assert any("Performans" in m for m in msgs)
+        mock_spawn.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════
-#  EVENT MANAGEMENT
+#  STATUS
 # ═══════════════════════════════════════════════════════════
 
-class TestEventManagement:
-    def test_add_event(self, loop, seeded_db):
-        loop.add_event("test-agent", "Test message", "info")
-        events = seeded_db.get_events()
-        assert len(events) == 1
-
-    def test_get_status(self, loop):
-        status = loop.get_status()
+class TestStatus:
+    @pytest.mark.asyncio
+    async def test_status_returns_dict(self, loop_instance, mock_db):
+        with patch("autonomous.get_db", return_value=mock_db):
+            status = await loop_instance.status()
         assert status["running"] is False
         assert status["tick_count"] == 0
         assert "total_events" in status
         assert "agents_tracked" in status
-
-    def test_get_events(self, loop, seeded_db):
-        loop.add_event("a1", "msg1")
-        loop.add_event("a2", "msg2")
-        events = loop.get_events(limit=10)
-        assert len(events) == 2

@@ -64,13 +64,13 @@ Runner, `llm_providers.py` uzerinden provider-agnostic calisir:
 | Provider | Env Key | Default Model |
 |---|---|---|
 | `anthropic` (default) | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
-| `gemini` | `GOOGLE_API_KEY` | `gemini-2.5-pro-preview-05-06` |
+| `gemini` | `GEMINI_API_KEY` | `gemini-2.5-pro` |
 
 `.env` dosyasi:
 ```
 LLM_PROVIDER=anthropic          # veya gemini
 ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=AIza...
+GEMINI_API_KEY=AIza...
 ```
 
 Dashboard Settings panelinden provider ve API key degistirilebilir.

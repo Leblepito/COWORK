@@ -251,7 +251,7 @@ def _get_env_value(key: str) -> str:
 @app.get("/api/settings/api-key-status")
 async def api_key_status():
     anthropic_key = _get_env_value("ANTHROPIC_API_KEY")
-    google_key = _get_env_value("GOOGLE_API_KEY")
+    google_key = _get_env_value("GEMINI_API_KEY")
     active_provider = _get_env_value("LLM_PROVIDER") or "anthropic"
     return {
         "set": bool(anthropic_key) if active_provider == "anthropic" else bool(google_key),
@@ -264,7 +264,7 @@ async def api_key_status():
 @app.post("/api/settings/api-key")
 async def api_set_key(key: str = Form(...), provider: str = Form("anthropic")):
     if provider == "gemini":
-        env_key = "GOOGLE_API_KEY"
+        env_key = "GEMINI_API_KEY"
     else:
         env_key = "ANTHROPIC_API_KEY"
     _write_env_file({env_key: key})

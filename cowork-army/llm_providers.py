@@ -148,36 +148,41 @@ class AnthropicProvider(LLMProvider):
 
 
 class GeminiProvider(LLMProvider):
-    """Gemini via google-generativeai SDK."""
+    """Gemini via google.genai SDK (new unified SDK)."""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.5-pro-preview-05-06"):
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        self._genai = genai
+    def __init__(self, api_key: str, model: str = "gemini-2.5-pro"):
+        from google import genai
+        from google.genai import types
+        self._client = genai.Client(api_key=api_key)
+        self._types = types
         self.model_name = model
         self._tool_call_counter = 0
-        # Build Gemini tools once
-        self._gemini_tools = None
 
-    def _build_gemini_tools(self, tools: list):
-        genai = self._genai
+    def _build_tools(self, tools: list) -> list:
+        """Convert provider-agnostic tool defs to Gemini FunctionDeclarations."""
+        types = self._types
         declarations = []
         for t in tools:
-            params = t["parameters"].copy()
-            # Gemini requires properties, ensure it exists
-            if "properties" not in params:
-                params["properties"] = {}
-            declarations.append(
-                genai.protos.FunctionDeclaration(
-                    name=t["name"],
-                    description=t["description"],
-                    parameters=params,
+            props = {}
+            for pname, pdef in t["parameters"].get("properties", {}).items():
+                props[pname] = types.Schema(
+                    type=types.Type.STRING,
+                    description=pdef.get("description", ""),
                 )
-            )
-        return genai.protos.Tool(function_declarations=declarations)
+            declarations.append(types.FunctionDeclaration(
+                name=t["name"],
+                description=t["description"],
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties=props,
+                    required=t["parameters"].get("required", []),
+                ),
+            ))
+        return [types.Tool(function_declarations=declarations)]
 
-    def _convert_messages(self, system: str, messages: list) -> tuple[str, list]:
-        """Convert Anthropic-format messages to Gemini contents."""
+    def _build_contents(self, messages: list) -> list:
+        """Convert message history to Gemini Content list."""
+        types = self._types
         contents = []
         for msg in messages:
             role = msg["role"]
@@ -185,72 +190,52 @@ class GeminiProvider(LLMProvider):
 
             if role == "user":
                 if isinstance(content, str):
-                    contents.append(
-                        self._genai.protos.Content(
-                            role="user",
-                            parts=[self._genai.protos.Part(text=content)]
-                        )
-                    )
+                    contents.append(types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=content)],
+                    ))
                 elif isinstance(content, list):
                     # Tool results
                     parts = []
                     for item in content:
                         if isinstance(item, dict) and item.get("type") == "tool_result":
-                            parts.append(
-                                self._genai.protos.Part(
-                                    function_response=self._genai.protos.FunctionResponse(
-                                        name=item["_function_name"],
-                                        response={"result": item["content"]},
-                                    )
-                                )
-                            )
-                        elif isinstance(item, dict) and "text" in item:
-                            parts.append(self._genai.protos.Part(text=item["text"]))
+                            parts.append(types.Part.from_function_response(
+                                name=item["_function_name"],
+                                response={"result": item["content"]},
+                            ))
                     if parts:
-                        contents.append(
-                            self._genai.protos.Content(role="user", parts=parts)
-                        )
-            elif role == "assistant" or role == "model":
-                if isinstance(content, str):
-                    contents.append(
-                        self._genai.protos.Content(
-                            role="model",
-                            parts=[self._genai.protos.Part(text=content)]
-                        )
-                    )
-                elif isinstance(content, list):
+                        contents.append(types.Content(role="user", parts=parts))
+            elif role == "model":
+                if isinstance(content, list):
                     parts = []
                     for item in content:
                         if isinstance(item, dict) and item.get("type") == "function_call":
-                            parts.append(
-                                self._genai.protos.Part(
-                                    function_call=self._genai.protos.FunctionCall(
-                                        name=item["name"],
-                                        args=item["args"],
-                                    )
-                                )
-                            )
-                        elif isinstance(item, dict) and "text" in item:
-                            parts.append(self._genai.protos.Part(text=item["text"]))
+                            parts.append(types.Part.from_function_call(
+                                name=item["name"],
+                                args=item["args"],
+                            ))
+                        elif isinstance(item, dict) and item.get("type") == "text":
+                            parts.append(types.Part.from_text(text=item["text"]))
                     if parts:
-                        contents.append(
-                            self._genai.protos.Content(role="model", parts=parts)
-                        )
+                        contents.append(types.Content(role="model", parts=parts))
+                elif isinstance(content, str) and content:
+                    contents.append(types.Content(
+                        role="model",
+                        parts=[types.Part.from_text(text=content)],
+                    ))
         return contents
 
     def chat(self, system: str, messages: list, tools: list) -> tuple[str, list[ToolCall]]:
-        genai = self._genai
+        gemini_tools = self._build_tools(tools)
+        contents = self._build_contents(messages)
 
-        gemini_tool = self._build_gemini_tools(tools)
-        model = genai.GenerativeModel(
-            model_name=self.model_name,
-            system_instruction=system,
-        )
-
-        contents = self._convert_messages(system, messages)
-        response = model.generate_content(
-            contents,
-            tools=[gemini_tool],
+        response = self._client.models.generate_content(
+            model=self.model_name,
+            contents=contents,
+            config=self._types.GenerateContentConfig(
+                system_instruction=system,
+                tools=gemini_tools,
+            ),
         )
 
         text = ""
@@ -276,7 +261,7 @@ class GeminiProvider(LLMProvider):
         return text, tool_calls
 
     def format_assistant_message(self, text: str, tool_calls: list[ToolCall]) -> dict:
-        return {"role": "assistant", "content": self._last_parts}
+        return {"role": "model", "content": self._last_parts}
 
     def format_tool_result(self, tool_call: ToolCall, content: str) -> dict:
         return {
@@ -292,6 +277,6 @@ def get_provider(provider_name: str, api_key: str, model: str = "") -> LLMProvid
     if provider_name == "anthropic":
         return AnthropicProvider(api_key=api_key, model=model or "claude-sonnet-4-20250514")
     elif provider_name == "gemini":
-        return GeminiProvider(api_key=api_key, model=model or "gemini-2.5-pro-preview-05-06")
+        return GeminiProvider(api_key=api_key, model=model or "gemini-2.5-pro")
     else:
         raise ValueError(f"Unknown LLM provider: {provider_name}. Use 'anthropic' or 'gemini'.")

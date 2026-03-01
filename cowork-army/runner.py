@@ -63,7 +63,7 @@ def _get_llm_config() -> tuple[str, str, str]:
     """Return (provider_name, api_key, model) from env."""
     provider = _read_env_value("LLM_PROVIDER") or "anthropic"
     if provider == "gemini":
-        api_key = _read_env_value("GOOGLE_API_KEY")
+        api_key = _read_env_value("GEMINI_API_KEY")
         model = _read_env_value("GEMINI_MODEL") or ""
     else:
         api_key = _read_env_value("ANTHROPIC_API_KEY")
@@ -126,7 +126,7 @@ def _run(proc: AgentProc, task: str):
     proc.log(f"{provider_label} API baglaniyor ({model or 'default'})")
 
     if not api_key:
-        key_name = "GOOGLE_API_KEY" if provider_name == "gemini" else "ANTHROPIC_API_KEY"
+        key_name = "GEMINI_API_KEY" if provider_name == "gemini" else "ANTHROPIC_API_KEY"
         proc.status = "error"
         proc.log(f"{key_name} bulunamadi!")
         proc.log("Dashboard'dan API Key girin veya .env dosyasina ekleyin")
