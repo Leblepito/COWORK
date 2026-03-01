@@ -1,12 +1,13 @@
 """
-Tests for runner.py — Agent Lifecycle & Tool Use Integration
-AgentProc state, spawn/kill, output buffer, tool execution, Claude API loop.
+Tests for runner.py — Agent Lifecycle & Tool Use Integration (v7)
+AgentProc state, spawn/kill, output buffer, tool execution, LLM provider loop.
 """
 import json
 import asyncio
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
-from runner import AgentProc, PROCS, CLAUDE_TOOLS, _execute_tool
+from runner import AgentProc, PROCS, _execute_tool
+from llm_providers import TOOL_DEFS, ToolCall
 
 
 class TestAgentProc:
@@ -78,23 +79,23 @@ class TestKillAgent:
 
 
 # ═══════════════════════════════════════════════════════════
-#  CLAUDE TOOLS SCHEMA
+#  TOOL DEFINITIONS (from llm_providers)
 # ═══════════════════════════════════════════════════════════
 
-class TestClaudeTools:
+class TestToolDefs:
     def test_five_tools_defined(self):
-        assert len(CLAUDE_TOOLS) == 5
+        assert len(TOOL_DEFS) == 5
 
     def test_all_have_required_fields(self):
-        for tool in CLAUDE_TOOLS:
+        for tool in TOOL_DEFS:
             assert "name" in tool
             assert "description" in tool
-            assert "input_schema" in tool
-            assert tool["input_schema"]["type"] == "object"
-            assert "properties" in tool["input_schema"]
+            assert "parameters" in tool
+            assert tool["parameters"]["type"] == "object"
+            assert "properties" in tool["parameters"]
 
     def test_tool_names(self):
-        names = [t["name"] for t in CLAUDE_TOOLS]
+        names = [t["name"] for t in TOOL_DEFS]
         assert "read_file" in names
         assert "write_file" in names
         assert "list_dir" in names
@@ -102,14 +103,14 @@ class TestClaudeTools:
         assert "run_command" in names
 
     def test_read_file_requires_path(self):
-        tool = next(t for t in CLAUDE_TOOLS if t["name"] == "read_file")
-        assert "path" in tool["input_schema"]["properties"]
-        assert "path" in tool["input_schema"]["required"]
+        tool = next(t for t in TOOL_DEFS if t["name"] == "read_file")
+        assert "path" in tool["parameters"]["properties"]
+        assert "path" in tool["parameters"]["required"]
 
     def test_write_file_requires_path_and_content(self):
-        tool = next(t for t in CLAUDE_TOOLS if t["name"] == "write_file")
-        assert "path" in tool["input_schema"]["required"]
-        assert "content" in tool["input_schema"]["required"]
+        tool = next(t for t in TOOL_DEFS if t["name"] == "write_file")
+        assert "path" in tool["parameters"]["required"]
+        assert "content" in tool["parameters"]["required"]
 
 
 # ═══════════════════════════════════════════════════════════
@@ -168,7 +169,7 @@ class TestExecuteTool:
 
 
 # ═══════════════════════════════════════════════════════════
-#  TOOL USE LOOP (_run with mocked Claude API)
+#  TOOL USE LOOP (_run with mocked LLM Provider)
 # ═══════════════════════════════════════════════════════════
 
 def _sync_db_for_test(coro):
@@ -188,108 +189,83 @@ def _make_agent_data(agent_id="test-agent"):
     }
 
 
-def _make_text_block(text):
-    block = MagicMock()
-    block.type = "text"
-    block.text = text
-    return block
-
-
-def _make_tool_use_block(name, tool_input, tool_id="tool-1"):
-    block = MagicMock()
-    block.type = "tool_use"
-    block.name = name
-    block.input = tool_input
-    block.id = tool_id
-    return block
-
-
 class TestToolUseRun:
     def test_simple_response_no_tools(self):
-        """Claude returns text only — no tool calls, task completes."""
+        """Provider returns text only — no tool calls, task completes."""
         from runner import _run
         proc = AgentProc("test-simple")
 
-        response = MagicMock()
-        response.content = [_make_text_block("Task done.")]
-
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = response
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = ("Task done.", [])
+        mock_provider.format_assistant_message.return_value = {"role": "assistant", "content": "Task done."}
 
         mock_db = AsyncMock()
         mock_db.get_agent.return_value = _make_agent_data("test-simple")
         mock_db.add_event.return_value = None
 
         with patch("runner.get_db", return_value=mock_db), \
-             patch("runner._get_api_key", return_value="sk-test-key"), \
-             patch("runner.Anthropic", return_value=mock_client), \
+             patch("runner._get_llm_config", return_value=("anthropic", "sk-test", "")), \
+             patch("runner.get_provider", return_value=mock_provider), \
              patch("runner._save_output"), \
              patch("runner._sync_db", side_effect=_sync_db_for_test):
             _run(proc, "Simple task")
 
         assert proc.status == "done"
-        mock_client.messages.create.assert_called_once()
+        mock_provider.chat.assert_called_once()
 
     def test_tool_use_round_then_done(self):
-        """Claude calls a tool, gets result, then responds with text."""
+        """Provider calls a tool, gets result, then responds with text."""
         from runner import _run
         proc = AgentProc("test-tools")
 
-        # Round 1: tool_use
-        resp1 = MagicMock()
-        resp1.content = [
-            _make_text_block("Let me read that file."),
-            _make_tool_use_block("read_file", {"path": "test.txt"}, "call-1"),
+        tc = ToolCall(id="call-1", name="read_file", input={"path": "test.txt"})
+
+        mock_provider = MagicMock()
+        mock_provider.chat.side_effect = [
+            ("Let me read that file.", [tc]),
+            ("File contains: hello world.", []),
         ]
-
-        # Round 2: text only (done)
-        resp2 = MagicMock()
-        resp2.content = [_make_text_block("File contains: hello world.")]
-
-        mock_client = MagicMock()
-        mock_client.messages.create.side_effect = [resp1, resp2]
+        mock_provider.format_assistant_message.return_value = {"role": "assistant", "content": "..."}
+        mock_provider.format_tool_result.return_value = {"type": "tool_result", "tool_use_id": "call-1", "content": "hello"}
 
         mock_db = AsyncMock()
         mock_db.get_agent.return_value = _make_agent_data("test-tools")
         mock_db.add_event.return_value = None
 
         with patch("runner.get_db", return_value=mock_db), \
-             patch("runner._get_api_key", return_value="sk-test"), \
-             patch("runner.Anthropic", return_value=mock_client), \
+             patch("runner._get_llm_config", return_value=("anthropic", "sk-test", "")), \
+             patch("runner.get_provider", return_value=mock_provider), \
              patch("runner.read_file", return_value={"content": "hello world"}), \
              patch("runner._save_output"), \
              patch("runner._sync_db", side_effect=_sync_db_for_test):
             _run(proc, "Read test.txt")
 
         assert proc.status == "done"
-        assert mock_client.messages.create.call_count == 2
+        assert mock_provider.chat.call_count == 2
 
     def test_multiple_tool_calls_in_one_response(self):
-        """Claude returns multiple tool_use blocks in a single response."""
+        """Provider returns multiple tool calls in a single response."""
         from runner import _run
         proc = AgentProc("test-multi")
 
-        # Round 1: two tool calls
-        resp1 = MagicMock()
-        resp1.content = [
-            _make_tool_use_block("read_file", {"path": "a.txt"}, "call-1"),
-            _make_tool_use_block("list_dir", {"path": "."}, "call-2"),
+        tc1 = ToolCall(id="call-1", name="read_file", input={"path": "a.txt"})
+        tc2 = ToolCall(id="call-2", name="list_dir", input={"path": "."})
+
+        mock_provider = MagicMock()
+        mock_provider.chat.side_effect = [
+            ("", [tc1, tc2]),
+            ("All done.", []),
         ]
-
-        # Round 2: done
-        resp2 = MagicMock()
-        resp2.content = [_make_text_block("All done.")]
-
-        mock_client = MagicMock()
-        mock_client.messages.create.side_effect = [resp1, resp2]
+        mock_provider.format_assistant_message.return_value = {"role": "assistant", "content": "..."}
+        mock_provider.format_tool_result.return_value = {"type": "tool_result", "content": "ok"}
 
         mock_db = AsyncMock()
         mock_db.get_agent.return_value = _make_agent_data("test-multi")
         mock_db.add_event.return_value = None
 
         with patch("runner.get_db", return_value=mock_db), \
-             patch("runner._get_api_key", return_value="sk-test"), \
-             patch("runner.Anthropic", return_value=mock_client), \
+             patch("runner._get_llm_config", return_value=("anthropic", "sk-test", "")), \
+             patch("runner.get_provider", return_value=mock_provider), \
              patch("runner.read_file", return_value={"content": "aaa"}), \
              patch("runner.list_dir", return_value={"files": ["a.txt"]}), \
              patch("runner._save_output"), \
@@ -297,7 +273,7 @@ class TestToolUseRun:
             _run(proc, "Read and list")
 
         assert proc.status == "done"
-        assert mock_client.messages.create.call_count == 2
+        assert mock_provider.chat.call_count == 2
 
     def test_api_key_missing(self):
         """Missing API key should set error status."""
@@ -308,7 +284,7 @@ class TestToolUseRun:
         mock_db.get_agent.return_value = _make_agent_data("test-nokey")
 
         with patch("runner.get_db", return_value=mock_db), \
-             patch("runner._get_api_key", return_value=""), \
+             patch("runner._get_llm_config", return_value=("anthropic", "", "")), \
              patch("runner._sync_db", side_effect=_sync_db_for_test):
             _run(proc, "Any task")
 
@@ -330,49 +306,84 @@ class TestToolUseRun:
         assert proc.status == "error"
         assert any("not found" in line.lower() for line in proc.lines)
 
-    def test_claude_api_exception(self):
-        """Claude API error should set error status."""
+    def test_provider_exception(self):
+        """LLM provider error should set error status."""
         from runner import _run
         proc = AgentProc("test-apierr")
 
-        mock_client = MagicMock()
-        mock_client.messages.create.side_effect = Exception("API rate limit exceeded")
+        mock_provider = MagicMock()
+        mock_provider.chat.side_effect = Exception("API rate limit exceeded")
 
         mock_db = AsyncMock()
         mock_db.get_agent.return_value = _make_agent_data("test-apierr")
         mock_db.add_event.return_value = None
 
         with patch("runner.get_db", return_value=mock_db), \
-             patch("runner._get_api_key", return_value="sk-test"), \
-             patch("runner.Anthropic", return_value=mock_client), \
+             patch("runner._get_llm_config", return_value=("anthropic", "sk-test", "")), \
+             patch("runner.get_provider", return_value=mock_provider), \
              patch("runner._sync_db", side_effect=_sync_db_for_test):
             _run(proc, "Will fail")
 
         assert proc.status == "error"
         assert any("rate limit" in line.lower() for line in proc.lines)
 
-    def test_tools_passed_to_claude(self):
-        """Verify CLAUDE_TOOLS are passed to the API call."""
+    def test_tools_passed_to_provider(self):
+        """Verify TOOL_DEFS are passed to the provider.chat() call."""
         from runner import _run
         proc = AgentProc("test-toolpass")
 
-        response = MagicMock()
-        response.content = [_make_text_block("Done.")]
-
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = response
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = ("Done.", [])
+        mock_provider.format_assistant_message.return_value = {"role": "assistant", "content": "Done."}
 
         mock_db = AsyncMock()
         mock_db.get_agent.return_value = _make_agent_data("test-toolpass")
         mock_db.add_event.return_value = None
 
         with patch("runner.get_db", return_value=mock_db), \
-             patch("runner._get_api_key", return_value="sk-test"), \
-             patch("runner.Anthropic", return_value=mock_client), \
+             patch("runner._get_llm_config", return_value=("anthropic", "sk-test", "")), \
+             patch("runner.get_provider", return_value=mock_provider), \
              patch("runner._save_output"), \
              patch("runner._sync_db", side_effect=_sync_db_for_test):
             _run(proc, "Check tools")
 
-        call_kwargs = mock_client.messages.create.call_args
-        assert call_kwargs.kwargs.get("tools") == CLAUDE_TOOLS or \
-               (len(call_kwargs.args) == 0 and "tools" in call_kwargs.kwargs)
+        call_args = mock_provider.chat.call_args
+        assert call_args[0][2] == TOOL_DEFS
+
+    def test_gemini_provider_label(self):
+        """When using Gemini, log should show 'Gemini' label."""
+        from runner import _run
+        proc = AgentProc("test-gemini")
+
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = ("Done.", [])
+        mock_provider.format_assistant_message.return_value = {"role": "assistant", "content": "Done."}
+
+        mock_db = AsyncMock()
+        mock_db.get_agent.return_value = _make_agent_data("test-gemini")
+        mock_db.add_event.return_value = None
+
+        with patch("runner.get_db", return_value=mock_db), \
+             patch("runner._get_llm_config", return_value=("gemini", "gk-test", "")), \
+             patch("runner.get_provider", return_value=mock_provider), \
+             patch("runner._save_output"), \
+             patch("runner._sync_db", side_effect=_sync_db_for_test):
+            _run(proc, "Gemini task")
+
+        assert any("Gemini" in line for line in proc.lines)
+
+    def test_gemini_missing_key(self):
+        """Missing Gemini key should mention GEMINI_API_KEY."""
+        from runner import _run
+        proc = AgentProc("test-gemini-nokey")
+
+        mock_db = AsyncMock()
+        mock_db.get_agent.return_value = _make_agent_data("test-gemini-nokey")
+
+        with patch("runner.get_db", return_value=mock_db), \
+             patch("runner._get_llm_config", return_value=("gemini", "", "")), \
+             patch("runner._sync_db", side_effect=_sync_db_for_test):
+            _run(proc, "Any task")
+
+        assert proc.status == "error"
+        assert any("GEMINI_API_KEY" in line for line in proc.lines)

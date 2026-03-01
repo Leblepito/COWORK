@@ -1,6 +1,6 @@
 /**
- * Tests for character-registry.ts — Character Definitions
- * Base characters, dynamic generation, determinism.
+ * Tests for character-registry.ts — Character Definitions (v7)
+ * 13 base characters, dynamic generation, determinism.
  */
 import { describe, it, expect } from "vitest";
 
@@ -15,14 +15,14 @@ import {
 // ═══════════════════════════════════════════════════════════
 
 describe("CHARACTER_REGISTRY", () => {
-    it("has 12 base characters", () => {
-        expect(Object.keys(CHARACTER_REGISTRY)).toHaveLength(12);
+    it("has 13 base characters", () => {
+        expect(Object.keys(CHARACTER_REGISTRY)).toHaveLength(13);
     });
 
     const expectedIds = [
-        "commander", "supervisor", "med-health", "travel-agent",
-        "trade-engine", "alpha-scout", "tech-analyst", "risk-sentinel",
-        "quant-lab", "growth-ops", "web-dev", "finance",
+        "cargo", "trade-master", "chart-eye", "risk-guard", "quant-brain",
+        "clinic-director", "patient-care", "hotel-manager", "travel-planner",
+        "concierge", "tech-lead", "full-stack", "data-ops",
     ];
 
     it.each(expectedIds)("has definition for %s", (id) => {
@@ -43,24 +43,28 @@ describe("CHARACTER_REGISTRY", () => {
         }
     });
 
-    it("commander has crown accessory", () => {
-        expect(CHARACTER_REGISTRY["commander"].accessories[0].type).toBe("crown");
+    it("cargo has package accessory", () => {
+        expect(CHARACTER_REGISTRY["cargo"].accessories[0].type).toBe("package");
     });
 
-    it("supervisor has magnifying glass", () => {
-        expect(CHARACTER_REGISTRY["supervisor"].accessories[0].type).toBe("magnifying_glass");
+    it("trade-master has tall body", () => {
+        expect(CHARACTER_REGISTRY["trade-master"].bodyShape).toBe("tall");
     });
 
-    it("med-health has medical cross", () => {
-        expect(CHARACTER_REGISTRY["med-health"].accessories[0].type).toBe("medical_cross");
+    it("risk-guard has guard stance", () => {
+        expect(CHARACTER_REGISTRY["risk-guard"].legStyle).toBe("guard_stance");
     });
 
-    it("trade-engine has wide body", () => {
-        expect(CHARACTER_REGISTRY["trade-engine"].bodyShape).toBe("wide");
+    it("clinic-director has stethoscope", () => {
+        expect(CHARACTER_REGISTRY["clinic-director"].accessories[0].type).toBe("stethoscope");
     });
 
-    it("risk-sentinel has guard stance", () => {
-        expect(CHARACTER_REGISTRY["risk-sentinel"].legStyle).toBe("guard_stance");
+    it("tech-lead has monitor_stack", () => {
+        expect(CHARACTER_REGISTRY["tech-lead"].accessories[0].type).toBe("monitor_stack");
+    });
+
+    it("full-stack has dynamic body", () => {
+        expect(CHARACTER_REGISTRY["full-stack"].bodyShape).toBe("dynamic");
     });
 });
 
@@ -70,8 +74,8 @@ describe("CHARACTER_REGISTRY", () => {
 
 describe("getCharacterDef", () => {
     it("returns base character for known IDs", () => {
-        const def = getCharacterDef("commander");
-        expect(def).toBe(CHARACTER_REGISTRY["commander"]);
+        const def = getCharacterDef("cargo");
+        expect(def).toBe(CHARACTER_REGISTRY["cargo"]);
     });
 
     it("generates character for unknown IDs", () => {

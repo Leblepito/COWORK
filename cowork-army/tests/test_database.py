@@ -1,13 +1,34 @@
 """
-Tests for database.py — Data Integrity (HIGH)
-CRUD operations, thread safety, JSON roundtrip, event pruning.
+Tests for database/repository.py — Async Database Repository (v7)
+Mocked async session, CRUD operations, dict converters.
 """
-import json
-import threading
-
 import pytest
+from unittest.mock import AsyncMock, MagicMock
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
-from database import Database
+from database.repository import Database
+
+
+# ── Fixtures ─────────────────────────────────────────────
+
+@pytest.fixture
+def mock_session():
+    """Create a mocked async session."""
+    session = AsyncMock()
+    session.commit.return_value = None
+    session.add = MagicMock()
+    return session
+
+
+@pytest.fixture
+def db(mock_session):
+    """Create a Database instance with mocked session factory."""
+    @asynccontextmanager
+    async def fake_sf():
+        yield mock_session
+
+    return Database(fake_sf)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -15,139 +36,97 @@ from database import Database
 # ═══════════════════════════════════════════════════════════
 
 class TestAgentCRUD:
-    """Test agent create, read, update, delete operations."""
+    @pytest.mark.asyncio
+    async def test_get_all_agents(self, db, mock_session):
+        agent_mock = MagicMock()
+        agent_mock.id = "cargo"
+        agent_mock.name = "Cargo Hub"
+        agent_mock.icon = "📦"
+        agent_mock.tier = "SUPERVISOR"
+        agent_mock.color = "#f59e0b"
+        agent_mock.domain = "Delivery"
+        agent_mock.description = "Cargo hub"
+        agent_mock.skills = ["delivery"]
+        agent_mock.rules = []
+        agent_mock.triggers = ["cargo"]
+        agent_mock.system_prompt = "You are cargo."
+        agent_mock.workspace_dir = "cargo"
+        agent_mock.is_base = True
+        agent_mock.created_at = datetime.now(timezone.utc)
 
-    def test_create_agent_with_auto_id(self, db):
-        agent = db.create_agent({"name": "Test Agent"})
-        assert agent["id"].startswith("agent-")
-        assert agent["name"] == "Test Agent"
-        assert agent["is_base"] is False
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = [agent_mock]
+        mock_session.execute.return_value = result_mock
 
-    def test_create_agent_with_explicit_id(self, db):
-        agent = db.create_agent({"id": "my-agent", "name": "Custom"})
-        assert agent["id"] == "my-agent"
+        agents = await db.get_all_agents()
+        assert len(agents) == 1
+        assert agents[0]["id"] == "cargo"
+        assert agents[0]["tier"] == "SUPERVISOR"
 
-    def test_get_agent_exists(self, db):
-        created = db.create_agent({"id": "test-1", "name": "Test"})
-        fetched = db.get_agent("test-1")
-        assert fetched is not None
-        assert fetched["name"] == "Test"
+    @pytest.mark.asyncio
+    async def test_get_agent_found(self, db, mock_session):
+        agent_mock = MagicMock()
+        agent_mock.id = "full-stack"
+        agent_mock.name = "Full Stack Dev"
+        agent_mock.icon = "⚡"
+        agent_mock.tier = "WORKER"
+        agent_mock.color = "#8b5cf6"
+        agent_mock.domain = "Full-Stack"
+        agent_mock.description = "Dev"
+        agent_mock.skills = ["frontend", "backend"]
+        agent_mock.rules = []
+        agent_mock.triggers = ["react"]
+        agent_mock.system_prompt = "You are dev."
+        agent_mock.workspace_dir = "full-stack"
+        agent_mock.is_base = True
+        agent_mock.created_at = datetime.now(timezone.utc)
 
-    def test_get_agent_not_found(self, db):
-        assert db.get_agent("nonexistent") is None
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = agent_mock
+        mock_session.execute.return_value = result_mock
 
-    def test_get_all_agents_empty(self, db):
-        agents = db.get_all_agents()
-        assert agents == []
+        agent = await db.get_agent("full-stack")
+        assert agent is not None
+        assert agent["id"] == "full-stack"
+        assert agent["skills"] == ["frontend", "backend"]
 
-    def test_get_all_agents_returns_list(self, db):
-        db.create_agent({"id": "a1", "name": "Agent 1"})
-        db.create_agent({"id": "a2", "name": "Agent 2"})
-        agents = db.get_all_agents()
-        assert len(agents) == 2
+    @pytest.mark.asyncio
+    async def test_get_agent_not_found(self, db, mock_session):
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = result_mock
 
-    def test_update_agent(self, db):
-        db.create_agent({"id": "u1", "name": "Before"})
-        updated = db.update_agent("u1", {"name": "After"})
-        assert updated["name"] == "After"
+        agent = await db.get_agent("nonexistent")
+        assert agent is None
 
-    def test_update_agent_partial_fields(self, db):
-        db.create_agent({"id": "p1", "name": "Original", "desc": "Original desc"})
-        updated = db.update_agent("p1", {"name": "Changed"})
-        assert updated["name"] == "Changed"
-        # desc should remain unchanged
-        assert updated["desc"] == "Original desc"
+    @pytest.mark.asyncio
+    async def test_upsert_agent(self, db, mock_session):
+        await db.upsert_agent({
+            "id": "test-agent", "name": "Test", "icon": "🤖",
+            "tier": "WORKER", "color": "#fff", "domain": "Test",
+            "desc": "Test agent",
+        })
+        mock_session.execute.assert_called_once()
+        mock_session.commit.assert_called_once()
 
-    def test_update_nonexistent_agent(self, db):
-        result = db.update_agent("nonexistent", {"name": "Test"})
-        assert result is None
+    @pytest.mark.asyncio
+    async def test_delete_agent(self, db, mock_session):
+        result_mock = MagicMock()
+        result_mock.rowcount = 1
+        mock_session.execute.return_value = result_mock
 
-    def test_update_agent_skills_array(self, db):
-        db.create_agent({"id": "s1", "name": "Skilled"})
-        updated = db.update_agent("s1", {"skills": ["python", "react", "sql"]})
-        assert updated["skills"] == ["python", "react", "sql"]
+        ok = await db.delete_agent("dynamic-agent")
+        assert ok is True
+        mock_session.commit.assert_called_once()
 
-    def test_delete_dynamic_agent(self, db):
-        db.create_agent({"id": "d1", "name": "Deletable"})
-        assert db.delete_agent("d1") is True
-        assert db.get_agent("d1") is None
+    @pytest.mark.asyncio
+    async def test_delete_agent_not_found(self, db, mock_session):
+        result_mock = MagicMock()
+        result_mock.rowcount = 0
+        mock_session.execute.return_value = result_mock
 
-    def test_delete_nonexistent_agent(self, db):
-        assert db.delete_agent("nonexistent") is False
-
-    def test_delete_base_agent_blocked(self, seeded_db):
-        result = seeded_db.delete_agent("commander")
-        assert result is False
-        assert seeded_db.get_agent("commander") is not None
-
-
-# ═══════════════════════════════════════════════════════════
-#  BASE AGENT SEEDING
-# ═══════════════════════════════════════════════════════════
-
-class TestBaseAgentSeeding:
-    """Test seed_base_agents operation."""
-
-    def test_seed_creates_all_12_agents(self, seeded_db):
-        agents = seeded_db.get_all_agents()
-        base_agents = [a for a in agents if a["is_base"]]
-        assert len(base_agents) == 12
-
-    def test_seed_idempotent(self, seeded_db):
-        from registry import get_base_agents_as_dicts
-        # Seed again — should not duplicate
-        seeded_db.seed_base_agents(get_base_agents_as_dicts())
-        agents = seeded_db.get_all_agents()
-        base_agents = [a for a in agents if a["is_base"]]
-        assert len(base_agents) == 12
-
-    def test_seed_updates_existing(self, seeded_db):
-        from registry import get_base_agents_as_dicts
-        dicts = get_base_agents_as_dicts()
-        dicts[0]["name"] = "Updated Commander"
-        seeded_db.seed_base_agents(dicts)
-        agent = seeded_db.get_agent(dicts[0]["id"])
-        assert agent["name"] == "Updated Commander"
-
-    def test_base_agents_have_required_fields(self, seeded_db):
-        for agent in seeded_db.get_all_agents():
-            assert agent["id"]
-            assert agent["name"]
-            assert agent["tier"] in ("COMMANDER", "SUPERVISOR", "DIRECTOR", "WORKER")
-            assert agent["is_base"] is True
-
-
-# ═══════════════════════════════════════════════════════════
-#  JSON SERIALIZATION ROUNDTRIP
-# ═══════════════════════════════════════════════════════════
-
-class TestJSONRoundtrip:
-    """Verify JSON arrays survive store → retrieve."""
-
-    def test_skills_roundtrip(self, db):
-        skills = ["python", "react", "türkçe"]
-        agent = db.create_agent({"id": "json-1", "name": "JSON Test", "skills": skills})
-        fetched = db.get_agent("json-1")
-        assert fetched["skills"] == skills
-
-    def test_rules_roundtrip(self, db):
-        rules = ["Rule 1", "Rule with 'quotes'", "Türkçe kural çğışöü"]
-        agent = db.create_agent({"id": "json-2", "name": "Rules", "rules": rules})
-        fetched = db.get_agent("json-2")
-        assert fetched["rules"] == rules
-
-    def test_triggers_roundtrip(self, db):
-        triggers = ["keyword1", "anahtar kelime", "çok", "özel"]
-        agent = db.create_agent({"id": "json-3", "name": "Triggers", "triggers": triggers})
-        fetched = db.get_agent("json-3")
-        assert fetched["triggers"] == triggers
-
-    def test_empty_arrays(self, db):
-        agent = db.create_agent({"id": "json-4", "name": "Empty"})
-        fetched = db.get_agent("json-4")
-        assert fetched["skills"] == []
-        assert fetched["rules"] == []
-        assert fetched["triggers"] == []
+        ok = await db.delete_agent("nonexistent")
+        assert ok is False
 
 
 # ═══════════════════════════════════════════════════════════
@@ -155,53 +134,57 @@ class TestJSONRoundtrip:
 # ═══════════════════════════════════════════════════════════
 
 class TestTaskCRUD:
-    """Test task create, read, update operations."""
+    @pytest.mark.asyncio
+    async def test_create_task(self, db, mock_session):
+        task_mock = MagicMock()
+        task_mock.id = "TASK-001"
+        task_mock.title = "Build page"
+        task_mock.description = "React component"
+        task_mock.assigned_to = "full-stack"
+        task_mock.priority = "high"
+        task_mock.status = "pending"
+        task_mock.created_by = "user"
+        task_mock.created_at = datetime.now(timezone.utc)
+        task_mock.updated_at = datetime.now(timezone.utc)
+        task_mock.log = []
 
-    def test_create_task(self, db):
-        task = db.create_task("Test Task", "Description", "agent-1", "high")
-        assert task["title"] == "Test Task"
-        assert task["status"] == "pending"
-        assert task["priority"] == "high"
-        assert task["assigned_to"] == "agent-1"
+        # Mock get_task (called internally after create)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = task_mock
+        mock_session.execute.return_value = result_mock
 
-    def test_create_task_auto_id(self, db):
-        task = db.create_task("Auto ID")
-        assert task["id"].startswith("task-")
+        task = await db.create_task("TASK-001", "Build page", "React component",
+                                     "full-stack", "high", "user", "pending", [])
+        assert task["id"] == "TASK-001"
+        assert task["assigned_to"] == "full-stack"
 
-    def test_list_tasks(self, db):
-        db.create_task("Task 1")
-        db.create_task("Task 2")
-        db.create_task("Task 3")
-        tasks = db.list_tasks()
-        assert len(tasks) == 3
+    @pytest.mark.asyncio
+    async def test_list_tasks(self, db, mock_session):
+        t1 = MagicMock()
+        t1.id = "TASK-1"
+        t1.title = "Task 1"
+        t1.description = ""
+        t1.assigned_to = "cargo"
+        t1.priority = "normal"
+        t1.status = "pending"
+        t1.created_by = "user"
+        t1.created_at = datetime.now(timezone.utc)
+        t1.updated_at = datetime.now(timezone.utc)
+        t1.log = []
 
-    def test_get_task(self, db):
-        created = db.create_task("Find Me")
-        fetched = db.get_task(created["id"])
-        assert fetched is not None
-        assert fetched["title"] == "Find Me"
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = [t1]
+        mock_session.execute.return_value = result_mock
 
-    def test_get_task_not_found(self, db):
-        assert db.get_task("nonexistent") is None
+        tasks = await db.list_tasks()
+        assert len(tasks) == 1
+        assert tasks[0]["id"] == "TASK-1"
 
-    def test_update_task_status(self, db):
-        task = db.create_task("Status Test")
-        db.update_task_status(task["id"], "in_progress", "Started working")
-        updated = db.get_task(task["id"])
-        assert updated["status"] == "in_progress"
-
-    def test_task_log_accumulates(self, db):
-        task = db.create_task("Log Test", assigned_to="agent-1")
-        # Initial log has 1 entry
-        assert len(task["log"]) == 1
-        db.update_task_status(task["id"], "in_progress", "Step 1")
-        db.update_task_status(task["id"], "done", "Step 2")
-        updated = db.get_task(task["id"])
-        assert len(updated["log"]) == 3
-
-    def test_update_nonexistent_task(self, db):
-        # Should not raise, just return
-        db.update_task_status("nonexistent", "done")
+    @pytest.mark.asyncio
+    async def test_update_task(self, db, mock_session):
+        await db.update_task("TASK-1", status="done")
+        mock_session.execute.assert_called_once()
+        mock_session.commit.assert_called_once()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -209,91 +192,138 @@ class TestTaskCRUD:
 # ═══════════════════════════════════════════════════════════
 
 class TestEventCRUD:
-    """Test event create, read, count, prune operations."""
+    @pytest.mark.asyncio
+    async def test_add_event(self, db, mock_session):
+        await db.add_event("cargo", "Test event", "info")
+        mock_session.add.assert_called_once()
+        mock_session.commit.assert_called_once()
 
-    def test_add_event(self, db):
-        db.add_event("agent-1", "Test message", "info")
-        events = db.get_events()
+    @pytest.mark.asyncio
+    async def test_get_events(self, db, mock_session):
+        evt = MagicMock()
+        evt.timestamp = datetime.now(timezone.utc)
+        evt.agent_id = "cargo"
+        evt.message = "Test event"
+        evt.type = "info"
+
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = [evt]
+        mock_session.execute.return_value = result_mock
+
+        events = await db.get_events()
         assert len(events) == 1
-        assert events[0]["message"] == "Test message"
-        assert events[0]["agent_id"] == "agent-1"
+        assert events[0]["agent_id"] == "cargo"
 
-    def test_get_events_default_limit(self, db):
-        for i in range(60):
-            db.add_event("agent-1", f"Event {i}")
-        events = db.get_events()
-        assert len(events) == 50  # default limit
+    @pytest.mark.asyncio
+    async def test_get_event_count(self, db, mock_session):
+        result_mock = MagicMock()
+        result_mock.scalar.return_value = 42
+        mock_session.execute.return_value = result_mock
 
-    def test_get_events_custom_limit(self, db):
-        for i in range(10):
-            db.add_event("agent-1", f"Event {i}")
-        events = db.get_events(limit=5)
-        assert len(events) == 5
+        count = await db.get_event_count()
+        assert count == 42
 
-    def test_get_events_since_filter(self, db):
-        db.add_event("agent-1", "Old event")
-        # Use an old timestamp to ensure new events are "after" it
-        since = "2000-01-01T00:00:00Z"
-        db.add_event("agent-1", "New event")
-        events = db.get_events(since=since)
-        # Both events are after the ancient timestamp
-        assert len(events) == 2
+    @pytest.mark.asyncio
+    async def test_get_event_count_zero(self, db, mock_session):
+        result_mock = MagicMock()
+        result_mock.scalar.return_value = None
+        mock_session.execute.return_value = result_mock
 
-    def test_event_count(self, db):
-        assert db.get_event_count() == 0
-        db.add_event("a1", "msg1")
-        db.add_event("a1", "msg2")
-        assert db.get_event_count() == 2
-
-    def test_event_pruning_keeps_max_2000(self, db):
-        # Add more than 2000 events
-        for i in range(2010):
-            db.add_event("agent-1", f"Event {i}")
-        count = db.get_event_count()
-        assert count <= 2000
+        count = await db.get_event_count()
+        assert count == 0
 
 
 # ═══════════════════════════════════════════════════════════
-#  THREAD SAFETY
+#  SEED BASE AGENTS
 # ═══════════════════════════════════════════════════════════
 
-class TestThreadSafety:
-    """Test concurrent operations don't corrupt data."""
+class TestSeed:
+    @pytest.mark.asyncio
+    async def test_seed_calls_upsert(self, db, mock_session):
+        agents = [
+            {"id": "cargo", "name": "Cargo", "is_base": 1},
+            {"id": "trade-master", "name": "Trade Master", "is_base": 1},
+        ]
+        await db.seed_base_agents(agents)
+        # Should call execute + commit for each agent (upsert)
+        assert mock_session.execute.call_count == 2
+        assert mock_session.commit.call_count == 2
 
-    def test_concurrent_agent_creates(self, db):
-        errors = []
 
-        def create_agent(i):
-            try:
-                db.create_agent({"id": f"thread-{i}", "name": f"Thread Agent {i}"})
-            except Exception as e:
-                errors.append(e)
+# ═══════════════════════════════════════════════════════════
+#  DICT CONVERTERS
+# ═══════════════════════════════════════════════════════════
 
-        threads = [threading.Thread(target=create_agent, args=(i,)) for i in range(20)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+class TestConverters:
+    def test_agent_to_dict(self):
+        agent = MagicMock()
+        agent.id = "test"
+        agent.name = "Test"
+        agent.icon = "🤖"
+        agent.tier = "WORKER"
+        agent.color = "#fff"
+        agent.domain = "Testing"
+        agent.description = "A test agent"
+        agent.skills = ["python"]
+        agent.rules = ["rule1"]
+        agent.triggers = ["test"]
+        agent.system_prompt = "You are test."
+        agent.workspace_dir = "test"
+        agent.is_base = False
+        agent.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
-        assert len(errors) == 0
-        agents = db.get_all_agents()
-        assert len(agents) == 20
+        d = Database._agent_to_dict(agent)
+        assert d["id"] == "test"
+        assert d["desc"] == "A test agent"
+        assert d["skills"] == ["python"]
+        assert d["is_base"] is False
 
-    def test_concurrent_event_writes(self, db):
-        errors = []
+    def test_agent_to_dict_none_skills(self):
+        agent = MagicMock()
+        agent.id = "empty"
+        agent.name = "Empty"
+        agent.icon = ""
+        agent.tier = "WORKER"
+        agent.color = ""
+        agent.domain = ""
+        agent.description = ""
+        agent.skills = None
+        agent.rules = None
+        agent.triggers = None
+        agent.system_prompt = ""
+        agent.workspace_dir = ""
+        agent.is_base = False
+        agent.created_at = None
 
-        def add_events(batch):
-            try:
-                for i in range(10):
-                    db.add_event(f"agent-{batch}", f"Event {batch}-{i}")
-            except Exception as e:
-                errors.append(e)
+        d = Database._agent_to_dict(agent)
+        assert d["skills"] == []
+        assert d["rules"] == []
+        assert d["triggers"] == []
 
-        threads = [threading.Thread(target=add_events, args=(i,)) for i in range(10)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+    def test_task_to_dict(self):
+        task = MagicMock()
+        task.id = "TASK-1"
+        task.title = "Test"
+        task.description = "Desc"
+        task.assigned_to = "cargo"
+        task.priority = "high"
+        task.status = "pending"
+        task.created_by = "user"
+        task.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        task.updated_at = datetime(2024, 1, 2, tzinfo=timezone.utc)
+        task.log = ["Step 1"]
 
-        assert len(errors) == 0
-        assert db.get_event_count() == 100
+        d = Database._task_to_dict(task)
+        assert d["id"] == "TASK-1"
+        assert d["log"] == ["Step 1"]
+
+    def test_event_to_dict(self):
+        event = MagicMock()
+        event.timestamp = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        event.agent_id = "cargo"
+        event.message = "Test"
+        event.type = "info"
+
+        d = Database._event_to_dict(event)
+        assert d["agent_id"] == "cargo"
+        assert d["type"] == "info"
