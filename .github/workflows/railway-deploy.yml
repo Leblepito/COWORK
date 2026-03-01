@@ -17,48 +17,103 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Diagnose Railway connection
+      - name: Railway diagnostics
+        id: diag
         run: |
-          echo "=== Railway whoami ==="
-          railway whoami 2>&1 || echo "EXIT: $?"
-          echo ""
-          echo "=== Railway status ==="
-          railway status 2>&1 || echo "EXIT: $?"
-          echo ""
-          echo "=== Railway environment ==="
-          railway environment 2>&1 || echo "EXIT: $?"
-          echo ""
-          echo "=== Railway service list ==="
-          railway service list 2>&1 || echo "EXIT: $?"
+          {
+            echo "## Railway Diagnostics"
+            echo ""
+            echo "### whoami"
+            echo '```'
+            railway whoami 2>&1 || echo "EXIT: $?"
+            echo '```'
+            echo ""
+            echo "### status"
+            echo '```'
+            railway status 2>&1 || echo "EXIT: $?"
+            echo '```'
+            echo ""
+            echo "### service list"
+            echo '```'
+            railway service list 2>&1 || echo "EXIT: $?"
+            echo '```'
+            echo ""
+            echo "### API test"
+            echo '```'
+            curl -s -X POST \
+              -H "Authorization: Bearer $RAILWAY_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://backboard.railway.app/graphql/v2" \
+              -d '{"query":"query { me { name email } }"}' 2>&1
+            echo ""
+            echo '```'
+            echo ""
+            echo "### Project info via API"
+            echo '```'
+            curl -s -X POST \
+              -H "Authorization: Bearer $RAILWAY_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://backboard.railway.app/graphql/v2" \
+              -d '{"query":"query { projects { edges { node { id name services { edges { node { id name } } } } } } }"}' 2>&1
+            echo ""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Test Railway API
-        run: |
-          echo "=== Testing Railway GraphQL API ==="
-          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
-            -H "Authorization: Bearer $RAILWAY_TOKEN" \
-            -H "Content-Type: application/json" \
-            "https://backboard.railway.app/graphql/v2" \
-            -d '{"query":"query { me { name email } }"}')
-          echo "$RESPONSE"
-
-          echo ""
-          echo "=== Testing project query ==="
-          RESPONSE2=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
-            -H "Authorization: Bearer $RAILWAY_TOKEN" \
-            -H "Content-Type: application/json" \
-            "https://backboard.railway.app/graphql/v2" \
-            -d '{"query":"query { projects { edges { node { id name } } } }"}')
-          echo "$RESPONSE2"
-
-      - name: Deploy backend with Railway CLI
+      - name: Deploy backend
+        id: backend
+        continue-on-error: true
         working-directory: backend
         run: |
-          echo "=== Deploying backend ==="
-          railway up 2>&1
-          echo "EXIT CODE: $?"
+          {
+            echo "## Backend Deploy"
+            echo '```'
+            railway up --verbose 2>&1 || echo "FAILED with exit: $?"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Deploy frontend with Railway CLI
+      - name: Deploy frontend
+        id: frontend
+        continue-on-error: true
         run: |
-          echo "=== Deploying frontend ==="
-          railway up 2>&1
-          echo "EXIT CODE: $?"
+          {
+            echo "## Frontend Deploy"
+            echo '```'
+            railway up --verbose 2>&1 || echo "FAILED with exit: $?"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: API Redeploy attempt
+        continue-on-error: true
+        run: |
+          {
+            echo "## API Redeploy"
+            echo '```'
+            # Get all services
+            SERVICES=$(curl -s -X POST \
+              -H "Authorization: Bearer $RAILWAY_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://backboard.railway.app/graphql/v2" \
+              -d '{"query":"query { projects { edges { node { id name environments { edges { node { id name } } } services { edges { node { id name } } } } } } }"}')
+            echo "Services: $SERVICES"
+            echo ""
+
+            # Try to redeploy each service
+            echo "$SERVICES" | jq -r '.data.projects.edges[].node | .id as $pid | .environments.edges[].node | select(.name == "production") | .id as $eid | $pid + "|" + $eid' 2>/dev/null | while read line; do
+              PID=$(echo "$line" | cut -d'|' -f1)
+              EID=$(echo "$line" | cut -d'|' -f2)
+              echo "Project: $PID, Environment: $EID"
+
+              echo "$SERVICES" | jq -r ".data.projects.edges[].node | select(.id == \"$PID\") | .services.edges[].node | .id + \"|\" + .name" 2>/dev/null | while read svc; do
+                SID=$(echo "$svc" | cut -d'|' -f1)
+                SNAME=$(echo "$svc" | cut -d'|' -f2)
+                echo "Redeploying $SNAME ($SID)..."
+                RESULT=$(curl -s -X POST \
+                  -H "Authorization: Bearer $RAILWAY_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  "https://backboard.railway.app/graphql/v2" \
+                  -d "{\"query\":\"mutation { serviceInstanceRedeploy(environmentId: \\\"$EID\\\", serviceId: \\\"$SID\\\") }\"}")
+                echo "Result: $RESULT"
+              done
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
