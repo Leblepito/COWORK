@@ -16,7 +16,8 @@ import type {
   CargoResult, CargoLog,
 } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_COWORK_API_URL || "/cowork-api";
+// Always use relative path — proxied through /cowork-api/[...path]/route.ts
+const BASE = "/cowork-api";
 
 // ── Fetch helper ──
 
