@@ -1,6 +1,6 @@
 """
 COWORK.ARMY — Agent Runner (Claude API lifecycle)
-spawn → read workspace → Claude API (with tool_use) → write output → done/error
+spawn → read workspace → Claude API → write output → done/error
 
 DB calls from threads use _sync_db() to bridge async→sync via the main event loop.
 """
@@ -10,74 +10,10 @@ from datetime import datetime
 from anthropic import Anthropic
 from database import get_db
 from database.connection import get_event_loop
-from tools import read_file, write_file, list_dir, search_files, run_command
 
 MODEL = "claude-sonnet-4-20250514"
 MAX_TOKENS = 4096
-MAX_TOOL_ROUNDS = 10
 WORKSPACE = Path(__file__).parent / "workspace"
-
-# Claude API tool definitions (proper schema format)
-CLAUDE_TOOLS = [
-    {
-        "name": "read_file",
-        "description": "Read a file from agent workspace or project directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path (relative to workspace or absolute)"}
-            },
-            "required": ["path"]
-        }
-    },
-    {
-        "name": "write_file",
-        "description": "Write content to a file in agent's workspace.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path relative to workspace"},
-                "content": {"type": "string", "description": "File content to write"}
-            },
-            "required": ["path", "content"]
-        }
-    },
-    {
-        "name": "list_dir",
-        "description": "List files and directories in a directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Directory path (empty string for workspace root)"}
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "search_files",
-        "description": "Search for files matching a glob pattern.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "pattern": {"type": "string", "description": "Glob pattern like *.py or *.md"},
-                "directory": {"type": "string", "description": "Search directory (empty for workspace root)"}
-            },
-            "required": ["pattern"]
-        }
-    },
-    {
-        "name": "run_command",
-        "description": "Run a shell command (limited to safe commands: ls, cat, head, tail, grep, find, python3, node, npm, git status/log/diff).",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "Shell command to run"},
-                "cwd": {"type": "string", "description": "Working directory (empty for workspace root)"}
-            },
-            "required": ["command"]
-        }
-    },
-]
 
 
 def _sync_db(coro):
@@ -142,123 +78,57 @@ def _workspace_context(agent_id: str) -> str:
     return "\n".join(parts)
 
 
-def _execute_tool(agent_id: str, tool_name: str, tool_input: dict) -> str:
-    """Execute a tool call and return the result as a string."""
-    try:
-        if tool_name == "read_file":
-            result = read_file(agent_id, tool_input["path"])
-        elif tool_name == "write_file":
-            result = write_file(agent_id, tool_input["path"], tool_input["content"])
-        elif tool_name == "list_dir":
-            result = list_dir(agent_id, tool_input.get("path", ""))
-        elif tool_name == "search_files":
-            result = search_files(agent_id, tool_input["pattern"], tool_input.get("directory", ""))
-        elif tool_name == "run_command":
-            result = run_command(agent_id, tool_input["command"], tool_input.get("cwd", ""))
-        else:
-            result = {"error": f"Unknown tool: {tool_name}"}
-        return json.dumps(result, ensure_ascii=False)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
 def _run(proc: AgentProc, task: str):
-    """Run agent in a thread with tool_use support. Uses _sync_db() for async DB calls."""
+    """Run agent in a thread. Uses _sync_db() for async DB calls."""
     db = get_db()
     agent = _sync_db(db.get_agent(proc.agent_id))
     if not agent:
-        proc.status = "error"; proc.log("Agent not found"); return
+        proc.status = "error"; proc.log("❌ Agent not found"); return
 
     proc.status = "thinking"
-    proc.log(f"Claude API baglaniyor ({MODEL})")
+    proc.log(f"🧠 Claude API bağlanıyor ({MODEL})")
 
     key = _get_api_key()
     if not key:
         proc.status = "error"
-        proc.log("ANTHROPIC_API_KEY bulunamadi!")
-        proc.log("Dashboard'dan API Key girin veya .env dosyasina ekleyin")
+        proc.log("❌ ANTHROPIC_API_KEY bulunamadı!")
+        proc.log("💡 Dashboard'dan API Key girin veya .env dosyasına ekleyin")
         return
 
-    proc.log("Workspace okunuyor...")
+    proc.log("📂 Workspace okunuyor...")
     proc.status = "searching"
     ctx = _workspace_context(proc.agent_id)
 
-    sys_prompt = agent["system_prompt"] + """
+    sys_prompt = agent["system_prompt"] + f"""
 
-Sana verilen tool'lari kullanarak gorevini tamamla.
-Dosya okuma, yazma, dizin listeleme, arama ve komut calistirma yapabilirsin.
-Isini bitirdiginde sonucu ozetle."""
+ÇIKTI FORMATI (JSON):
+{{"status":"completed","summary":"Kısa özet","actions_taken":["Yapılan 1"],"output_files":[{{"filename":"x.md","content":"..."}}],"notes":"","next_steps":["Sonraki adım"]}}"""
 
-    user_msg = f"Gorevin:\n{task}\n\nWorkspace durumun:\n{ctx}\n\nGorevi yap."
-    proc.log(f"Gorev: {task[:80]}")
-    proc.log("API cagrisi...")
+    user_msg = f"Görevin:\n{task}\n\nWorkspace durumun:\n{ctx}\n\nGörevi yap ve JSON formatında yanıtla."
+    proc.log(f"📋 Görev: {task[:80]}")
+    proc.log("🚀 API çağrısı...")
     proc.status = "working"
 
     try:
         client = Anthropic(api_key=key)
-        messages = [{"role": "user", "content": user_msg}]
-        collected_text = ""
-
-        for round_num in range(MAX_TOOL_ROUNDS):
-            if proc.status == "done":
-                break  # killed externally
-
-            response = client.messages.create(
-                model=MODEL, max_tokens=MAX_TOKENS, system=sys_prompt,
-                messages=messages, tools=CLAUDE_TOOLS,
-            )
-
-            # Process response content blocks
-            assistant_content = []
-            tool_calls = []
-
-            for block in response.content:
-                if block.type == "text":
-                    collected_text += block.text
-                    preview = block.text[:80].replace('\n', ' ')
-                    proc.log(f"  {preview}")
-                    assistant_content.append(block)
-                elif block.type == "tool_use":
-                    tool_calls.append(block)
-                    assistant_content.append(block)
-                    proc.log(f"  Tool: {block.name}({json.dumps(block.input, ensure_ascii=False)[:60]})")
-
-            # Add assistant message
-            messages.append({"role": "assistant", "content": assistant_content})
-
-            # If no tool calls, we're done
-            if not tool_calls:
-                proc.log(f"Yanit: {len(collected_text)} karakter")
-                break
-
-            # Execute tool calls and add results
-            proc.status = "coding"
-            tool_results = []
-            for tc in tool_calls:
-                proc.log(f"  Tool calistiriliyor: {tc.name}")
-                result_str = _execute_tool(proc.agent_id, tc.name, tc.input)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tc.id,
-                    "content": result_str,
-                })
-                # Log result preview
-                preview = result_str[:80].replace('\n', ' ')
-                proc.log(f"    Sonuc: {preview}")
-
-            messages.append({"role": "user", "content": tool_results})
-            proc.status = "working"
-            proc.log(f"  Round {round_num + 1}/{MAX_TOOL_ROUNDS} tamamlandi")
-
+        collected = ""
+        with client.messages.stream(model=MODEL, max_tokens=MAX_TOKENS, system=sys_prompt,
+                                     messages=[{"role": "user", "content": user_msg}]) as stream:
+            proc.log("📡 Stream alınıyor...")
+            for text in stream.text_stream:
+                collected += text
+                if len(collected) % 200 < len(text):
+                    proc.log(f"  ...{collected[-60:].replace(chr(10), ' ')}")
+        proc.log(f"✅ Yanıt: {len(collected)} karakter")
         proc.status = "coding"
-        proc.log("Cikti kaydediliyor...")
-        _save_output(proc.agent_id, task, collected_text, proc)
+        proc.log("💾 Çıktı kaydediliyor...")
+        _save_output(proc.agent_id, task, collected, proc)
         proc.status = "done"
-        proc.log("Gorev tamamlandi!")
-        _sync_db(db.add_event(proc.agent_id, f"Gorev tamamlandi: {task[:50]}", "info"))
+        proc.log("✅ Görev tamamlandı!")
+        _sync_db(db.add_event(proc.agent_id, f"Görev tamamlandı: {task[:50]}", "info"))
     except Exception as e:
         proc.status = "error"
-        proc.log(f"Hata: {e}")
+        proc.log(f"❌ {e}")
         _sync_db(db.add_event(proc.agent_id, f"Hata: {e}", "warning"))
 
 

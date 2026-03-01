@@ -53,13 +53,8 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="COWORK.ARMY", version="6.0", lifespan=lifespan)
+app = FastAPI(title="COWORK.ARMY", version="5.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-# ══════════════ HEALTH ══════════════
-@app.get("/health")
-async def health():
-    return {"status": "ok", "version": "6.0"}
 
 # ══════════════ INFO ══════════════
 @app.get("/api/info")
@@ -67,7 +62,7 @@ async def api_info():
     db = get_db()
     agents = await db.get_all_agents()
     return {
-        "name": "COWORK.ARMY", "version": "6.0", "mode": "production",
+        "name": "COWORK.ARMY", "version": "5.0", "mode": "production",
         "agents": len(agents), "bridge_connected": False, "bridge_count": 0,
         "autonomous": autonomous.running, "autonomous_ticks": autonomous.tick_count,
     }
@@ -150,22 +145,6 @@ async def api_create_task(title: str = Form(...), description: str = Form(""),
         tid = f"TASK-{uuid.uuid4().hex[:8].upper()}"
         return await db.create_task(tid, title, description, assigned_to, priority, "user", "pending", [])
     return await delegate_task(title, description, priority)
-
-@app.put("/api/tasks/{task_id}")
-async def api_update_task(task_id: str, status: str = Form(""), log_message: str = Form("")):
-    db = get_db()
-    task = await db.get_task(task_id)
-    if not task:
-        return JSONResponse({"error": "task not found"}, 404)
-    updates = {}
-    if status:
-        updates["status"] = status
-    if log_message:
-        current_log = task.get("log", [])
-        updates["log"] = current_log + [log_message]
-    if updates:
-        await db.update_task(task_id, **updates)
-    return await db.get_task(task_id)
 
 # ══════════════ COMMANDER ══════════════
 @app.post("/api/commander/delegate")
