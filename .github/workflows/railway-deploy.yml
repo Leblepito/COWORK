@@ -9,31 +9,7 @@ env:
   RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
 
 jobs:
-  get-services:
-    runs-on: ubuntu-latest
-    outputs:
-      services: ${{ steps.list.outputs.services }}
-      project-info: ${{ steps.info.outputs.info }}
-    steps:
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Get project info
-        id: info
-        run: |
-          echo "=== Railway Project Info ==="
-          railway whoami 2>&1 || echo "Project-scoped token"
-          echo "info=connected" >> "$GITHUB_OUTPUT"
-
-      - name: List services
-        id: list
-        run: |
-          echo "=== Listing services ==="
-          railway service list 2>&1 | tee /tmp/services.txt
-          echo "services=$(cat /tmp/services.txt)" >> "$GITHUB_OUTPUT"
-
-  deploy-backend:
-    needs: get-services
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,78 +17,48 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy Backend
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        working-directory: backend
+      - name: Diagnose Railway connection
         run: |
-          echo "Deploying backend..."
-          railway up --detach 2>&1 || {
-            echo "railway up failed, trying with service flag..."
-            railway up --service backend --detach 2>&1 || true
-          }
-          echo "Backend deploy triggered"
+          echo "=== Railway whoami ==="
+          railway whoami 2>&1 || echo "EXIT: $?"
+          echo ""
+          echo "=== Railway status ==="
+          railway status 2>&1 || echo "EXIT: $?"
+          echo ""
+          echo "=== Railway environment ==="
+          railway environment 2>&1 || echo "EXIT: $?"
+          echo ""
+          echo "=== Railway service list ==="
+          railway service list 2>&1 || echo "EXIT: $?"
 
-  deploy-frontend:
-    needs: get-services
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Deploy Frontend
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      - name: Test Railway API
         run: |
-          echo "Deploying frontend..."
-          railway up --detach 2>&1 || {
-            echo "railway up failed, trying with service flag..."
-            railway up --service frontend --detach 2>&1 || true
-          }
-          echo "Frontend deploy triggered"
-
-  api-trigger:
-    needs: get-services
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger redeploy via Railway API
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          PROJECT_ID: 78ef3a62-9691-4ece-a6cd-f5a46fb79a3b
-          ENV_ID: 6203d789-faaf-460e-a6eb-93e31d733ee0
-        run: |
-          echo "=== Getting services via API ==="
-          RESPONSE=$(curl -sf -X POST \
+          echo "=== Testing Railway GraphQL API ==="
+          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
             -H "Authorization: Bearer $RAILWAY_TOKEN" \
             -H "Content-Type: application/json" \
             "https://backboard.railway.app/graphql/v2" \
-            -d '{"query":"query { project(id: \"'"$PROJECT_ID"'\") { name services { edges { node { id name } } } } }"}')
+            -d '{"query":"query { me { name email } }"}')
+          echo "$RESPONSE"
 
-          echo "$RESPONSE" | jq '.' 2>/dev/null || echo "$RESPONSE"
+          echo ""
+          echo "=== Testing project query ==="
+          RESPONSE2=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://backboard.railway.app/graphql/v2" \
+            -d '{"query":"query { projects { edges { node { id name } } } }"}')
+          echo "$RESPONSE2"
 
-          # Extract service IDs and trigger redeploy
-          SERVICE_IDS=$(echo "$RESPONSE" | jq -r '.data.project.services.edges[].node | "\(.id)|\(.name)"' 2>/dev/null)
+      - name: Deploy backend with Railway CLI
+        working-directory: backend
+        run: |
+          echo "=== Deploying backend ==="
+          railway up 2>&1
+          echo "EXIT CODE: $?"
 
-          if [ -z "$SERVICE_IDS" ]; then
-            echo "No services found or API error. Response:"
-            echo "$RESPONSE"
-            exit 1
-          fi
-
-          for SERVICE in $SERVICE_IDS; do
-            SVC_ID=$(echo "$SERVICE" | cut -d'|' -f1)
-            SVC_NAME=$(echo "$SERVICE" | cut -d'|' -f2)
-            echo "Triggering redeploy for $SVC_NAME ($SVC_ID)..."
-
-            RESULT=$(curl -sf -X POST \
-              -H "Authorization: Bearer $RAILWAY_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://backboard.railway.app/graphql/v2" \
-              -d '{"query":"mutation { serviceInstanceRedeploy(environmentId: \"'"$ENV_ID"'\", serviceId: \"'"$SVC_ID"'\") }"}')
-
-            echo "$SVC_NAME result: $RESULT"
-          done
-
-          echo "All redeployments triggered!"
+      - name: Deploy frontend with Railway CLI
+        run: |
+          echo "=== Deploying frontend ==="
+          railway up 2>&1
+          echo "EXIT CODE: $?"
