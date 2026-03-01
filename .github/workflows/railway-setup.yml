@@ -18,57 +18,52 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Collect Railway info and configure
-        id: railway
         run: |
           REPORT=""
 
-          # Status
-          REPORT+="## Railway Status\n"
-          STATUS=$(railway status 2>&1) || true
-          REPORT+="\`\`\`\n${STATUS}\n\`\`\`\n\n"
-
-          # Set env var
-          REPORT+="## Set COWORK_API_URL\n"
-          SET_VAR=$(railway variables set COWORK_API_URL="http://backend.railway.internal:8888" \
+          # Fix Dockerfile path (was cowork-army/frontend/Dockerfile, should be frontend/Dockerfile)
+          REPORT+="## Fix RAILWAY_DOCKERFILE_PATH\n"
+          FIX_PATH=$(railway variables set RAILWAY_DOCKERFILE_PATH="frontend/Dockerfile" \
             --service frontend --environment production 2>&1) || true
-          REPORT+="\`\`\`\n${SET_VAR}\n\`\`\`\n\n"
+          REPORT+="\`\`\`\n${FIX_PATH}\n\`\`\`\n\n"
 
-          # List variables
-          REPORT+="## Frontend Variables\n"
+          # Remove stale NEXT_PUBLIC_COWORK_API_URL (no longer needed, using middleware proxy)
+          REPORT+="## Remove NEXT_PUBLIC_COWORK_API_URL\n"
+          DEL_VAR=$(railway variables delete NEXT_PUBLIC_COWORK_API_URL \
+            --service frontend --environment production --yes 2>&1) || true
+          REPORT+="\`\`\`\n${DEL_VAR}\n\`\`\`\n\n"
+
+          # Check Railway domain CLI usage
+          REPORT+="## Railway domain help\n"
+          HELP=$(railway domain --help 2>&1) || true
+          REPORT+="\`\`\`\n${HELP}\n\`\`\`\n\n"
+
+          # Try adding root domain — correct syntax
+          REPORT+="## Add ireska.com\n"
+          ADD1=$(railway domain ireska.com --service frontend 2>&1) || true
+          REPORT+="\`\`\`\n${ADD1}\n\`\`\`\n\n"
+
+          # Try www
+          REPORT+="## Add www.ireska.com\n"
+          ADD2=$(railway domain www.ireska.com --service frontend 2>&1) || true
+          REPORT+="\`\`\`\n${ADD2}\n\`\`\`\n\n"
+
+          # List domains
+          REPORT+="## Current Domains\n"
+          DOMAINS=$(railway domain --service frontend 2>&1) || true
+          REPORT+="\`\`\`\n${DOMAINS}\n\`\`\`\n\n"
+
+          # Variables after fix
+          REPORT+="## Frontend Variables (after fix)\n"
           VARS=$(railway variables --service frontend --environment production 2>&1) || true
           REPORT+="\`\`\`\n${VARS}\n\`\`\`\n\n"
 
-          # Current domains
-          REPORT+="## Current Domains (before)\n"
-          DOMAINS_BEFORE=$(railway domain --service frontend --environment production 2>&1) || true
-          REPORT+="\`\`\`\n${DOMAINS_BEFORE}\n\`\`\`\n\n"
-
-          # Add domains
-          REPORT+="## Add ireska.com\n"
-          ADD1=$(railway domain add ireska.com --service frontend --environment production 2>&1) || true
-          REPORT+="\`\`\`\n${ADD1}\n\`\`\`\n\n"
-
-          REPORT+="## Add www.ireska.com\n"
-          ADD2=$(railway domain add www.ireska.com --service frontend --environment production 2>&1) || true
-          REPORT+="\`\`\`\n${ADD2}\n\`\`\`\n\n"
-
-          # Domains after
-          REPORT+="## Domains (after)\n"
-          DOMAINS_AFTER=$(railway domain --service frontend --environment production 2>&1) || true
-          REPORT+="\`\`\`\n${DOMAINS_AFTER}\n\`\`\`\n\n"
-
-          # Backend service status
-          REPORT+="## Backend Domains\n"
-          BACKEND_DOMAINS=$(railway domain --service backend --environment production 2>&1) || true
-          REPORT+="\`\`\`\n${BACKEND_DOMAINS}\n\`\`\`\n\n"
-
-          # Redeploy
+          # Redeploy with corrected Dockerfile path
           REPORT+="## Redeploy Frontend\n"
           cd frontend
           DEPLOY=$(railway up --detach --service frontend --environment production 2>&1) || true
           REPORT+="\`\`\`\n${DEPLOY}\n\`\`\`\n"
 
-          # Write to file
           echo -e "$REPORT" > /tmp/railway-report.md
 
       - name: Create GitHub issue with results
@@ -77,6 +72,6 @@ jobs:
         run: |
           gh issue create \
             --repo ${{ github.repository }} \
-            --title "Railway Setup Report — $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --title "Railway Setup v2 — $(date -u '+%Y-%m-%d %H:%M UTC')" \
             --body-file /tmp/railway-report.md \
             || echo "Issue creation failed"
