@@ -21,32 +21,18 @@ jobs:
         run: |
           REPORT=""
 
-          # Fix Dockerfile path (was cowork-army/frontend/Dockerfile, should be frontend/Dockerfile)
+          # Fix Dockerfile path — railway up runs from cd frontend,
+          # so upload root IS frontend/. Path must be "Dockerfile" not "frontend/Dockerfile"
           REPORT+="## Fix RAILWAY_DOCKERFILE_PATH\n"
-          FIX_PATH=$(railway variables set RAILWAY_DOCKERFILE_PATH="frontend/Dockerfile" \
+          FIX_PATH=$(railway variables set RAILWAY_DOCKERFILE_PATH="Dockerfile" \
             --service frontend --environment production 2>&1) || true
           REPORT+="\`\`\`\n${FIX_PATH}\n\`\`\`\n\n"
 
-          # Remove stale NEXT_PUBLIC_COWORK_API_URL (no longer needed, using middleware proxy)
-          REPORT+="## Remove NEXT_PUBLIC_COWORK_API_URL\n"
-          DEL_VAR=$(railway variables delete NEXT_PUBLIC_COWORK_API_URL \
-            --service frontend --environment production --yes 2>&1) || true
-          REPORT+="\`\`\`\n${DEL_VAR}\n\`\`\`\n\n"
-
-          # Check Railway domain CLI usage
-          REPORT+="## Railway domain help\n"
-          HELP=$(railway domain --help 2>&1) || true
-          REPORT+="\`\`\`\n${HELP}\n\`\`\`\n\n"
-
-          # Try adding root domain — correct syntax
-          REPORT+="## Add ireska.com\n"
-          ADD1=$(railway domain ireska.com --service frontend 2>&1) || true
-          REPORT+="\`\`\`\n${ADD1}\n\`\`\`\n\n"
-
-          # Try www
-          REPORT+="## Add www.ireska.com\n"
-          ADD2=$(railway domain www.ireska.com --service frontend 2>&1) || true
-          REPORT+="\`\`\`\n${ADD2}\n\`\`\`\n\n"
+          # Ensure COWORK_API_URL is set for Railway private networking
+          REPORT+="## Set COWORK_API_URL\n"
+          SET_URL=$(railway variables set COWORK_API_URL="http://backend.railway.internal:8888" \
+            --service frontend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${SET_URL}\n\`\`\`\n\n"
 
           # List domains
           REPORT+="## Current Domains\n"
@@ -54,11 +40,11 @@ jobs:
           REPORT+="\`\`\`\n${DOMAINS}\n\`\`\`\n\n"
 
           # Variables after fix
-          REPORT+="## Frontend Variables (after fix)\n"
+          REPORT+="## Frontend Variables\n"
           VARS=$(railway variables --service frontend --environment production 2>&1) || true
           REPORT+="\`\`\`\n${VARS}\n\`\`\`\n\n"
 
-          # Redeploy with corrected Dockerfile path
+          # Redeploy with corrected config
           REPORT+="## Redeploy Frontend\n"
           cd frontend
           DEPLOY=$(railway up --detach --service frontend --environment production 2>&1) || true
@@ -72,6 +58,6 @@ jobs:
         run: |
           gh issue create \
             --repo ${{ github.repository }} \
-            --title "Railway Setup v2 — $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --title "Railway Setup — $(date -u '+%Y-%m-%d %H:%M UTC')" \
             --body-file /tmp/railway-report.md \
             || echo "Issue creation failed"
