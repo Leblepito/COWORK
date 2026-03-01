@@ -11,109 +11,86 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Railway diagnostics
-        id: diag
+      - name: Run diagnostics and deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          {
-            echo "## Railway Diagnostics"
-            echo ""
-            echo "### whoami"
-            echo '```'
-            railway whoami 2>&1 || echo "EXIT: $?"
-            echo '```'
-            echo ""
-            echo "### status"
-            echo '```'
-            railway status 2>&1 || echo "EXIT: $?"
-            echo '```'
-            echo ""
-            echo "### service list"
-            echo '```'
-            railway service list 2>&1 || echo "EXIT: $?"
-            echo '```'
-            echo ""
-            echo "### API test"
-            echo '```'
-            curl -s -X POST \
+          REPORT=""
+
+          # Diagnostics
+          REPORT+="## Railway Diagnostics\n\n"
+
+          REPORT+="### whoami\n\`\`\`\n"
+          REPORT+="$(railway whoami 2>&1 || echo 'FAILED')\n"
+          REPORT+="\`\`\`\n\n"
+
+          REPORT+="### status\n\`\`\`\n"
+          REPORT+="$(railway status 2>&1 || echo 'FAILED')\n"
+          REPORT+="\`\`\`\n\n"
+
+          REPORT+="### service list\n\`\`\`\n"
+          REPORT+="$(railway service list 2>&1 || echo 'FAILED')\n"
+          REPORT+="\`\`\`\n\n"
+
+          # API Test
+          REPORT+="### API me query\n\`\`\`\n"
+          API_ME=$(curl -s -X POST \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://backboard.railway.app/graphql/v2" \
+            -d '{"query":"query { me { name email } }"}' 2>&1)
+          REPORT+="$API_ME\n"
+          REPORT+="\`\`\`\n\n"
+
+          REPORT+="### API projects query\n\`\`\`\n"
+          API_PROJECTS=$(curl -s -X POST \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://backboard.railway.app/graphql/v2" \
+            -d '{"query":"query { projects { edges { node { id name services { edges { node { id name } } } environments { edges { node { id name } } } } } } }"}' 2>&1)
+          REPORT+="$API_PROJECTS\n"
+          REPORT+="\`\`\`\n\n"
+
+          # Deploy backend
+          REPORT+="## Backend Deploy\n\`\`\`\n"
+          cd backend
+          BACKEND_OUT=$(railway up 2>&1 || echo "EXIT CODE: $?")
+          REPORT+="$BACKEND_OUT\n"
+          REPORT+="\`\`\`\n\n"
+          cd ..
+
+          # Deploy frontend
+          REPORT+="## Frontend Deploy\n\`\`\`\n"
+          FRONTEND_OUT=$(railway up 2>&1 || echo "EXIT CODE: $?")
+          REPORT+="$FRONTEND_OUT\n"
+          REPORT+="\`\`\`\n\n"
+
+          # API Redeploy
+          REPORT+="## API Redeploy\n\`\`\`\n"
+          echo "$API_PROJECTS" | jq -r '.data.projects.edges[]?.node | .id as $pid | (.environments.edges[]?.node | select(.name == "production") | .id) as $eid | .services.edges[]?.node | "\($pid)|\($eid)|\(.id)|\(.name)"' 2>/dev/null | while read line; do
+            PID=$(echo "$line" | cut -d'|' -f1)
+            EID=$(echo "$line" | cut -d'|' -f2)
+            SID=$(echo "$line" | cut -d'|' -f3)
+            SNAME=$(echo "$line" | cut -d'|' -f4)
+            echo "Redeploying $SNAME ($SID) in env $EID..."
+            RESULT=$(curl -s -X POST \
               -H "Authorization: Bearer $RAILWAY_TOKEN" \
               -H "Content-Type: application/json" \
               "https://backboard.railway.app/graphql/v2" \
-              -d '{"query":"query { me { name email } }"}' 2>&1
-            echo ""
-            echo '```'
-            echo ""
-            echo "### Project info via API"
-            echo '```'
-            curl -s -X POST \
-              -H "Authorization: Bearer $RAILWAY_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://backboard.railway.app/graphql/v2" \
-              -d '{"query":"query { projects { edges { node { id name services { edges { node { id name } } } } } } }"}' 2>&1
-            echo ""
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+              -d "{\"query\":\"mutation { serviceInstanceRedeploy(environmentId: \\\"$EID\\\", serviceId: \\\"$SID\\\") }\"}")
+            echo "Result: $RESULT"
+            REPORT+="$SNAME: $RESULT\n"
+          done
+          REPORT+="\`\`\`\n"
 
-      - name: Deploy backend
-        id: backend
-        continue-on-error: true
-        working-directory: backend
-        run: |
-          {
-            echo "## Backend Deploy"
-            echo '```'
-            railway up --verbose 2>&1 || echo "FAILED with exit: $?"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Deploy frontend
-        id: frontend
-        continue-on-error: true
-        run: |
-          {
-            echo "## Frontend Deploy"
-            echo '```'
-            railway up --verbose 2>&1 || echo "FAILED with exit: $?"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: API Redeploy attempt
-        continue-on-error: true
-        run: |
-          {
-            echo "## API Redeploy"
-            echo '```'
-            # Get all services
-            SERVICES=$(curl -s -X POST \
-              -H "Authorization: Bearer $RAILWAY_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://backboard.railway.app/graphql/v2" \
-              -d '{"query":"query { projects { edges { node { id name environments { edges { node { id name } } } services { edges { node { id name } } } } } } }"}')
-            echo "Services: $SERVICES"
-            echo ""
-
-            # Try to redeploy each service
-            echo "$SERVICES" | jq -r '.data.projects.edges[].node | .id as $pid | .environments.edges[].node | select(.name == "production") | .id as $eid | $pid + "|" + $eid' 2>/dev/null | while read line; do
-              PID=$(echo "$line" | cut -d'|' -f1)
-              EID=$(echo "$line" | cut -d'|' -f2)
-              echo "Project: $PID, Environment: $EID"
-
-              echo "$SERVICES" | jq -r ".data.projects.edges[].node | select(.id == \"$PID\") | .services.edges[].node | .id + \"|\" + .name" 2>/dev/null | while read svc; do
-                SID=$(echo "$svc" | cut -d'|' -f1)
-                SNAME=$(echo "$svc" | cut -d'|' -f2)
-                echo "Redeploying $SNAME ($SID)..."
-                RESULT=$(curl -s -X POST \
-                  -H "Authorization: Bearer $RAILWAY_TOKEN" \
-                  -H "Content-Type: application/json" \
-                  "https://backboard.railway.app/graphql/v2" \
-                  -d "{\"query\":\"mutation { serviceInstanceRedeploy(environmentId: \\\"$EID\\\", serviceId: \\\"$SID\\\") }\"}")
-                echo "Result: $RESULT"
-              done
-            done
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          # Post report to issue #30
+          echo -e "$REPORT" > /tmp/report.md
+          gh issue comment 30 -R Leblepito/COWORK -F /tmp/report.md
