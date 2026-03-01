@@ -9,55 +9,74 @@ env:
 jobs:
   setup:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Railway Status
-        id: status
+      - name: Collect Railway info and configure
+        id: railway
         run: |
-          echo "## Railway Status" >> $GITHUB_STEP_SUMMARY
-          railway status 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "⚠️ No linked project" >> $GITHUB_STEP_SUMMARY
+          REPORT=""
 
-      - name: Set COWORK_API_URL on frontend
-        run: |
-          echo "## Set COWORK_API_URL" >> $GITHUB_STEP_SUMMARY
-          OUTPUT=$(railway variables set COWORK_API_URL="http://backend.railway.internal:8888" \
+          # Status
+          REPORT+="## Railway Status\n"
+          STATUS=$(railway status 2>&1) || true
+          REPORT+="\`\`\`\n${STATUS}\n\`\`\`\n\n"
+
+          # Set env var
+          REPORT+="## Set COWORK_API_URL\n"
+          SET_VAR=$(railway variables set COWORK_API_URL="http://backend.railway.internal:8888" \
             --service frontend --environment production 2>&1) || true
-          echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
+          REPORT+="\`\`\`\n${SET_VAR}\n\`\`\`\n\n"
 
-      - name: List frontend variables
-        run: |
-          echo "## Frontend Variables" >> $GITHUB_STEP_SUMMARY
-          railway variables --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "⚠️ Failed" >> $GITHUB_STEP_SUMMARY
+          # List variables
+          REPORT+="## Frontend Variables\n"
+          VARS=$(railway variables --service frontend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${VARS}\n\`\`\`\n\n"
 
-      - name: List current frontend domains
-        run: |
-          echo "## Current Frontend Domains" >> $GITHUB_STEP_SUMMARY
-          railway domain --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "⚠️ No domains" >> $GITHUB_STEP_SUMMARY
+          # Current domains
+          REPORT+="## Current Domains (before)\n"
+          DOMAINS_BEFORE=$(railway domain --service frontend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${DOMAINS_BEFORE}\n\`\`\`\n\n"
 
-      - name: Add ireska.com domain
-        run: |
-          echo "## Add ireska.com" >> $GITHUB_STEP_SUMMARY
-          railway domain add ireska.com \
-            --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "⚠️ Failed or already exists" >> $GITHUB_STEP_SUMMARY
+          # Add domains
+          REPORT+="## Add ireska.com\n"
+          ADD1=$(railway domain add ireska.com --service frontend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${ADD1}\n\`\`\`\n\n"
 
-      - name: Add www.ireska.com domain
-        run: |
-          echo "## Add www.ireska.com" >> $GITHUB_STEP_SUMMARY
-          railway domain add www.ireska.com \
-            --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "⚠️ Failed or already exists" >> $GITHUB_STEP_SUMMARY
+          REPORT+="## Add www.ireska.com\n"
+          ADD2=$(railway domain add www.ireska.com --service frontend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${ADD2}\n\`\`\`\n\n"
 
-      - name: List domains after adding
-        run: |
-          echo "## Domains After Setup" >> $GITHUB_STEP_SUMMARY
-          railway domain --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY || true
+          # Domains after
+          REPORT+="## Domains (after)\n"
+          DOMAINS_AFTER=$(railway domain --service frontend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${DOMAINS_AFTER}\n\`\`\`\n\n"
 
-      - name: Redeploy frontend
-        run: |
-          echo "## Redeploy Frontend" >> $GITHUB_STEP_SUMMARY
+          # Backend service status
+          REPORT+="## Backend Domains\n"
+          BACKEND_DOMAINS=$(railway domain --service backend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${BACKEND_DOMAINS}\n\`\`\`\n\n"
+
+          # Redeploy
+          REPORT+="## Redeploy Frontend\n"
           cd frontend
-          railway up --detach --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY
+          DEPLOY=$(railway up --detach --service frontend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${DEPLOY}\n\`\`\`\n"
+
+          # Write to file
+          echo -e "$REPORT" > /tmp/railway-report.md
+
+      - name: Create GitHub issue with results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "Railway Setup Report — $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --body-file /tmp/railway-report.md \
+            --label "infra"
