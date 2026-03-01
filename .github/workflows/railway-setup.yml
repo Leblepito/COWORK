@@ -15,34 +15,49 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Link project
+      - name: Railway Status
+        id: status
         run: |
-          # List linked project info
-          railway status || true
+          echo "## Railway Status" >> $GITHUB_STEP_SUMMARY
+          railway status 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "⚠️ No linked project" >> $GITHUB_STEP_SUMMARY
 
       - name: Set COWORK_API_URL on frontend
         run: |
-          railway variables set COWORK_API_URL="http://backend.railway.internal:8888" \
-            --service frontend --environment production || true
-          echo "✅ COWORK_API_URL set on frontend service"
+          echo "## Set COWORK_API_URL" >> $GITHUB_STEP_SUMMARY
+          OUTPUT=$(railway variables set COWORK_API_URL="http://backend.railway.internal:8888" \
+            --service frontend --environment production 2>&1) || true
+          echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
 
-      - name: Add custom domain ireska.com to frontend
+      - name: List frontend variables
         run: |
+          echo "## Frontend Variables" >> $GITHUB_STEP_SUMMARY
+          railway variables --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "⚠️ Failed" >> $GITHUB_STEP_SUMMARY
+
+      - name: List current frontend domains
+        run: |
+          echo "## Current Frontend Domains" >> $GITHUB_STEP_SUMMARY
+          railway domain --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "⚠️ No domains" >> $GITHUB_STEP_SUMMARY
+
+      - name: Add ireska.com domain
+        run: |
+          echo "## Add ireska.com" >> $GITHUB_STEP_SUMMARY
           railway domain add ireska.com \
-            --service frontend --environment production || true
-          echo "✅ ireska.com domain added to frontend"
+            --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "⚠️ Failed or already exists" >> $GITHUB_STEP_SUMMARY
 
-      - name: Add www subdomain
+      - name: Add www.ireska.com domain
         run: |
+          echo "## Add www.ireska.com" >> $GITHUB_STEP_SUMMARY
           railway domain add www.ireska.com \
-            --service frontend --environment production || true
-          echo "✅ www.ireska.com domain added to frontend"
+            --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY || echo "⚠️ Failed or already exists" >> $GITHUB_STEP_SUMMARY
 
-      - name: Verify domains
+      - name: List domains after adding
         run: |
-          railway domain list --service frontend --environment production || true
+          echo "## Domains After Setup" >> $GITHUB_STEP_SUMMARY
+          railway domain --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY || true
 
-      - name: Redeploy frontend with new env vars
+      - name: Redeploy frontend
         run: |
+          echo "## Redeploy Frontend" >> $GITHUB_STEP_SUMMARY
           cd frontend
-          railway up --detach --service frontend --environment production
+          railway up --detach --service frontend --environment production 2>&1 | tee -a $GITHUB_STEP_SUMMARY
