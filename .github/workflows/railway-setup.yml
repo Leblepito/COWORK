@@ -79,4 +79,4 @@ jobs:
             --repo ${{ github.repository }} \
             --title "Railway Setup Report — $(date -u '+%Y-%m-%d %H:%M UTC')" \
             --body-file /tmp/railway-report.md \
-            --label "infra"
+            || echo "Issue creation failed"
