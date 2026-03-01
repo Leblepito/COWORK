@@ -7,16 +7,22 @@ Sen **COWORK.ARMY Commander Agent**'issin. Bu platform, AI agent ordusunu yonete
 ```
 COWORK/
 ├── cowork-army/                 ← Backend (FastAPI, port 8888)
-│   ├── server.py                → Ana sunucu, tum API route'lari
-│   ├── database.py              → SQLite DB (agents, tasks, events)
+│   ├── server.py                → Ana sunucu, tum API route'lari (async)
+│   ├── database/                → PostgreSQL async DB paketi
+│   │   ├── __init__.py          → setup_db(), get_db() exports
+│   │   ├── connection.py        → create_async_engine, session factory
+│   │   ├── models.py            → SQLAlchemy ORM: Agent, Task, Event
+│   │   └── repository.py       → Async CRUD (Database class)
 │   ├── registry.py              → 12 base agent tanimi (BASE_AGENTS)
 │   ├── runner.py                → Agent lifecycle: spawn → run → done/error
-│   ├── autonomous.py            → Otonom dongu (tick-based agent koordinasyonu)
+│   ├── autonomous.py            → Otonom dongu (asyncio task-based)
 │   ├── commander.py             → Keyword-based task routing + dinamik agent olusturma
 │   ├── tools.py                 → Agent tool definitions (read/write/search/run)
 │   ├── requirements.txt         → Python bagimliliklari
+│   ├── docker-compose.yml       → PostgreSQL 16 container (port 5433)
+│   ├── alembic.ini              → Alembic migration config
+│   ├── alembic/                 → Migration dosyalari
 │   ├── .env                     → ANTHROPIC_API_KEY (gitignore'da)
-│   ├── cowork.db                → SQLite veritabani (gitignore'da)
 │   └── frontend/                ← Frontend (Next.js 15, port 3333)
 │       ├── app/page.tsx         → Ana sayfa: 3-panel layout + modals
 │       ├── lib/cowork-api.ts    → Backend API client
@@ -42,7 +48,7 @@ Telefon/Browser → Frontend (Railway / localhost:3333)
                       ↓ API calls
                   Backend (Cloudflare Tunnel / localhost:8888)
                       ↓
-                  SQLite DB (cowork.db)
+                  PostgreSQL (Docker / localhost:5433)
                       ↓
                   Claude API (Anthropic)
                       ↓
@@ -59,7 +65,7 @@ Registry'de tanimli, DB'ye seed edilen, silinemez agentlar:
 | commander | Yonetici | COMMANDER |
 | supervisor | Denetci | SUPERVISOR |
 | med-health | Medikal Saglik | DIRECTOR |
-| travel-agent | Seyahat | WORKER |
+| travel-agent | Seyahat | DIRECTOR |
 | trade-engine | Trading Orchestrator | DIRECTOR |
 | alpha-scout | Sentiment Hunter | WORKER |
 | tech-analyst | Teknik Analiz | WORKER |
@@ -72,7 +78,7 @@ Registry'de tanimli, DB'ye seed edilen, silinemez agentlar:
 ### Dinamik Agentlar
 - UI'dan manuel olusturulabilir ("+ Yeni" butonu)
 - Commander auto-route eslesmezse otomatik olusturulur
-- SQLite'a kaydedilir, silinebilir
+- PostgreSQL'e kaydedilir, silinebilir
 - 3D sahnede "DYNAMIC AGENTS" zone'unda gorunur
 - Hash-based prosedural karakter olusturma
 
@@ -111,9 +117,13 @@ Registry'de tanimli, DB'ye seed edilen, silinemez agentlar:
 ## Calistirma
 
 ```bash
-# Backend
+# PostgreSQL
 cd cowork-army
+docker compose up -d                # port 5433
+
+# Backend
 pip install -r requirements.txt
+alembic upgrade head                # tablo olustur
 python server.py                    # port 8888
 
 # Frontend
@@ -124,17 +134,20 @@ npm run dev                         # port 3333
 
 ## Database
 
-SQLite, 3 tablo:
-- **agents**: id, name, icon, tier, color, domain, desc, skills, rules, triggers, system_prompt, workspace_dir, is_base, created_at
-- **tasks**: id, title, description, assigned_to, priority, status, created_by, created_at, log
-- **events**: id, timestamp, agent_id, message, type
+PostgreSQL 16 + async SQLAlchemy 2.0, 3 tablo:
+- **agents**: id (PK), name, icon, tier, color, domain, description, skills (JSON), rules (JSON), triggers (JSON), system_prompt, workspace_dir, is_base, created_at, updated_at
+- **tasks**: id (PK), title, description, assigned_to, priority, status, created_by, created_at, updated_at, log (JSON)
+- **events**: id (SERIAL PK), timestamp (TIMESTAMPTZ), agent_id, message, type
 
-WAL mode, thread-safe writes.
+Indexler: events(timestamp), tasks(status), tasks(assigned_to)
+
+Connection: `DATABASE_URL` env var (default: `postgresql+asyncpg://cowork:cowork@localhost:5433/cowork_army`)
 
 ## Deploy
 
 - **Frontend**: Railway (NEXT_PUBLIC_COWORK_API_URL env var)
 - **Backend**: Cloudflare Tunnel → localhost:8888
+- **Database**: Docker PostgreSQL (veya managed PG)
 - **Domain**: ireska.com
 
 ## Kodlama Kurallari
@@ -149,4 +162,4 @@ WAL mode, thread-safe writes.
 
 ---
 
-*COWORK.ARMY v5.0 — 12 base + dinamik agent destegi, SQLite persistence, 3D gorsellestime*
+*COWORK.ARMY v6.0 — 12 base + dinamik agent destegi, PostgreSQL persistence, async SQLAlchemy, 3D gorsellestime*

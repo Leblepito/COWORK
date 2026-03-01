@@ -1,135 +1,82 @@
 """
-COWORK.ARMY — Autonomous Loop
-Background tick that monitors agents, auto-spawns pending tasks, generates events.
-Events persisted to SQLite.
+COWORK.ARMY — Autonomous Loop (asyncio task-based)
+Periodically checks inboxes, triggers agents, logs events.
 """
-from __future__ import annotations
+import asyncio, json
+from datetime import datetime
+from pathlib import Path
+from database import get_db
+from runner import spawn_agent, PROCS
 
-import asyncio
-import logging
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from runner import AgentRunner
-    from database import Database
-
-logger = logging.getLogger("cowork-army.autonomous")
-
-TICK_INTERVAL = 30  # seconds
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+WORKSPACE = Path(__file__).parent / "workspace"
 
 
 class AutonomousLoop:
-    """Background loop that ticks every 30 seconds. Events stored in DB."""
+    def __init__(self):
+        self.running = False
+        self.tick_count = 0
+        self._task: asyncio.Task | None = None
+        self.last_tick = None
 
-    def __init__(self, runner: AgentRunner, db: Database) -> None:
-        self.runner = runner
-        self.db = db
-        self.running: bool = False
-        self.tick_count: int = 0
-        self.last_tick: str | None = None
-        self._task: asyncio.Task[None] | None = None
-
-    # ── Control ─────────────────────────────────────────
-
-    def start(self) -> None:
-        if self.running:
-            return
+    async def start(self):
+        if self.running: return
         self.running = True
         self._task = asyncio.create_task(self._loop())
-        self.add_event("commander", "Otonom döngü başlatıldı", "info")
-        logger.info("Autonomous loop started")
+        db = get_db()
+        await db.add_event("system", "Otonom döngü başlatıldı", "info")
 
-    def stop(self) -> None:
+    async def stop(self):
         self.running = False
-        if self._task and not self._task.done():
+        if self._task:
             self._task.cancel()
-        self.add_event("commander", "Otonom döngü durduruldu", "info")
-        logger.info("Autonomous loop stopped")
+            self._task = None
+        db = get_db()
+        await db.add_event("system", "Otonom döngü durduruldu", "info")
 
-    # ── Events ──────────────────────────────────────────
-
-    def add_event(
-        self,
-        agent_id: str,
-        message: str,
-        event_type: str = "info",
-    ) -> None:
-        self.db.add_event(agent_id, message, event_type)
-
-    def get_status(self) -> dict:
-        return {
-            "running": self.running,
-            "tick_count": self.tick_count,
-            "total_events": self.db.get_event_count(),
-            "agents_tracked": len(self.db.get_all_agents()),
-            "last_tick": self.last_tick,
-        }
-
-    def get_events(self, limit: int = 50, since: str = "") -> list[dict]:
-        return self.db.get_events(limit=limit, since=since)
-
-    # ── Loop ────────────────────────────────────────────
-
-    async def _loop(self) -> None:
+    async def _loop(self):
         while self.running:
             try:
                 await self._tick()
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.exception("Autonomous tick error")
-                self.add_event("commander", f"Döngü hatası: {e}", "warning")
-            await asyncio.sleep(TICK_INTERVAL)
+                db = get_db()
+                await db.add_event("system", f"Tick hatası: {e}", "warning")
+            await asyncio.sleep(30)
 
-    async def _tick(self) -> None:
+    async def _tick(self):
+        db = get_db()
         self.tick_count += 1
-        self.last_tick = _now_iso()
+        self.last_tick = datetime.now().isoformat()
+        agents = await db.get_all_agents()
 
-        # 1. Report alive agents
-        alive = [
-            aid for aid, proc in self.runner.processes.items()
-            if proc.alive
-        ]
-        if alive:
-            names = ", ".join(alive)
-            self.add_event(
-                "commander",
-                f"Tick #{self.tick_count}: {len(alive)} aktif agent — {names}",
-                "info",
-            )
-        else:
-            self.add_event(
-                "commander",
-                f"Tick #{self.tick_count}: tüm agentlar boşta",
-                "info",
-            )
+        for agent in agents:
+            aid = agent["id"]
+            inbox = WORKSPACE / aid / "inbox"
+            if not inbox.exists(): continue
 
-        # 2. Auto-spawn pending tasks
-        pending = [t for t in self.db.list_tasks() if t["status"] == "pending"]
-        for task in pending[:3]:
-            agent_id = task["assigned_to"]
-            proc = self.runner.processes.get(agent_id)
-            if proc and not proc.alive:
-                self.add_event(
-                    agent_id,
-                    f"Otomatik başlatılıyor — görev: {task['title'][:60]}",
-                    "task_created",
-                )
-                desc = f"{task['title']}: {task['description']}" if task["description"] else task["title"]
-                await self.runner.spawn(agent_id, desc)
-                self.db.update_task_status(
-                    task["id"], "in_progress", "Otonom döngü tarafından başlatıldı",
-                )
+            tasks = list(inbox.glob("TASK-*.json"))
+            if not tasks: continue
 
-        # 3. Supervisor inbox check (every 5th tick)
-        if self.tick_count % 5 == 0:
-            self.add_event("supervisor", "Inbox kontrolü — agent çıktıları inceleniyor", "inbox_check")
+            # Agent idle and has tasks → spawn
+            if aid not in PROCS or not PROCS[aid].alive:
+                try:
+                    t = json.loads(tasks[0].read_text())
+                    await db.add_event(aid, f"Inbox'ta görev bulundu: {t.get('title', '?')[:50]}", "inbox_check")
+                    await spawn_agent(aid, f"{t['title']}: {t.get('description', '')}")
+                except: pass
 
-        # 4. Quant-lab self-improve (every 10th tick)
-        if self.tick_count % 10 == 0:
-            self.add_event("quant-lab", "Performans metrikleri analiz ediliyor", "self_improve")
+    async def status(self) -> dict:
+        db = get_db()
+        event_count = await db.get_event_count()
+        agents = await db.get_all_agents()
+        return {
+            "running": self.running,
+            "tick_count": self.tick_count,
+            "total_events": event_count,
+            "agents_tracked": len(agents),
+            "last_tick": self.last_tick,
+        }
+
+
+autonomous = AutonomousLoop()

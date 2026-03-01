@@ -1,276 +1,153 @@
 """
-COWORK.ARMY — Claude Tool Definitions + Sandboxed Executor
-Her agent kendi workspace_dir'i içinde dosya okur/yazar/komut çalıştırır.
+COWORK.ARMY — Agent Tools
+Tools agents can use: read_file, write_file, list_dir, search_files, run_command
+These are executed server-side when agents request tool use.
 """
-from __future__ import annotations
-
-import asyncio
-import os
-import re
+import os, json, subprocess, glob
 from pathlib import Path
 
-# ── Tool Definitions (Anthropic tool_use format) ────────
+WORKSPACE = Path(__file__).parent / "workspace"
+PROJECT_ROOT = Path(os.environ.get("COWORK_ROOT", Path(__file__).parent.parent))
 
+def read_file(agent_id: str, path: str) -> dict:
+    """Read a file from agent workspace or project directory."""
+    # Security: resolve and check path
+    if path.startswith("/"):
+        resolved = Path(path)
+    else:
+        resolved = WORKSPACE / agent_id / path
+    resolved = resolved.resolve()
+    
+    # Must be within workspace or project root
+    ok = str(resolved).startswith(str(WORKSPACE.resolve())) or \
+         str(resolved).startswith(str(PROJECT_ROOT.resolve()))
+    if not ok:
+        return {"error": "Access denied: path outside allowed directories"}
+    if not resolved.exists():
+        return {"error": f"File not found: {path}"}
+    if not resolved.is_file():
+        return {"error": f"Not a file: {path}"}
+    try:
+        content = resolved.read_text(errors="replace")[:100000]
+        return {"path": str(resolved), "content": content, "size": resolved.stat().st_size}
+    except Exception as e:
+        return {"error": str(e)}
+
+def write_file(agent_id: str, path: str, content: str) -> dict:
+    """Write a file to agent's workspace only."""
+    resolved = (WORKSPACE / agent_id / path).resolve()
+    if not str(resolved).startswith(str((WORKSPACE / agent_id).resolve())):
+        return {"error": "Access denied: can only write to own workspace"}
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content)
+        return {"path": str(resolved), "written": len(content)}
+    except Exception as e:
+        return {"error": str(e)}
+
+def list_dir(agent_id: str, path: str = "") -> dict:
+    """List directory contents."""
+    if not path or path == ".":
+        target = WORKSPACE / agent_id
+    elif path.startswith("/"):
+        target = Path(path)
+    else:
+        target = WORKSPACE / agent_id / path
+    target = target.resolve()
+    
+    ok = str(target).startswith(str(WORKSPACE.resolve())) or \
+         str(target).startswith(str(PROJECT_ROOT.resolve()))
+    if not ok:
+        return {"error": "Access denied"}
+    if not target.exists():
+        return {"error": f"Directory not found: {path}"}
+    
+    entries = []
+    try:
+        for item in sorted(target.iterdir()):
+            entries.append({
+                "name": item.name,
+                "type": "dir" if item.is_dir() else "file",
+                "size": item.stat().st_size if item.is_file() else 0,
+            })
+    except Exception as e:
+        return {"error": str(e)}
+    return {"path": str(target), "entries": entries}
+
+def search_files(agent_id: str, pattern: str, directory: str = "") -> dict:
+    """Search for files matching a glob pattern."""
+    if directory:
+        base = Path(directory).resolve()
+    else:
+        base = WORKSPACE / agent_id
+    
+    ok = str(base.resolve()).startswith(str(WORKSPACE.resolve())) or \
+         str(base.resolve()).startswith(str(PROJECT_ROOT.resolve()))
+    if not ok:
+        return {"error": "Access denied"}
+    
+    matches = []
+    try:
+        for f in base.rglob(pattern):
+            if f.is_file():
+                matches.append(str(f.relative_to(base)))
+                if len(matches) >= 100:
+                    break
+    except Exception as e:
+        return {"error": str(e)}
+    return {"pattern": pattern, "base": str(base), "matches": matches, "count": len(matches)}
+
+def run_command(agent_id: str, command: str, cwd: str = "") -> dict:
+    """Run a shell command in agent's workspace. Limited commands only."""
+    # Whitelist safe commands
+    allowed_prefixes = ["ls", "cat", "head", "tail", "wc", "grep", "find", "echo", "date", "pwd",
+                        "python3", "node", "npm", "git status", "git log", "git diff"]
+    cmd_lower = command.strip().lower()
+    if not any(cmd_lower.startswith(p) for p in allowed_prefixes):
+        return {"error": f"Command not allowed. Allowed: {', '.join(allowed_prefixes)}"}
+    
+    work_dir = cwd if cwd else str(WORKSPACE / agent_id)
+    try:
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True,
+            timeout=30, cwd=work_dir
+        )
+        return {
+            "command": command,
+            "stdout": result.stdout[:10000],
+            "stderr": result.stderr[:5000],
+            "returncode": result.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "Command timed out (30s limit)"}
+    except Exception as e:
+        return {"error": str(e)}
+
+# Tool registry for agent system prompts
 TOOL_DEFINITIONS = [
     {
         "name": "read_file",
-        "description": "Read the contents of a file in the workspace.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "File path relative to workspace root",
-                },
-            },
-            "required": ["path"],
-        },
+        "description": "Read a file from workspace or project directory",
+        "parameters": {"path": "File path (relative to workspace or absolute)"},
     },
     {
-        "name": "write_file",
-        "description": "Write content to a file in the workspace (creates or overwrites).",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "File path relative to workspace root",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Content to write to the file",
-                },
-            },
-            "required": ["path", "content"],
-        },
+        "name": "write_file", 
+        "description": "Write content to a file in agent's workspace",
+        "parameters": {"path": "File path (relative to workspace)", "content": "File content"},
     },
     {
-        "name": "list_directory",
-        "description": "List files and subdirectories in a directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Directory path relative to workspace root (use '.' for root)",
-                },
-            },
-            "required": ["path"],
-        },
+        "name": "list_dir",
+        "description": "List files in a directory",
+        "parameters": {"path": "Directory path (empty=workspace root)"},
     },
     {
-        "name": "search_code",
-        "description": "Search for a regex pattern across files in the workspace.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Regex pattern to search for",
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Directory to search in (relative, default '.')",
-                },
-                "glob": {
-                    "type": "string",
-                    "description": "File glob filter (e.g. '*.py', '*.ts')",
-                },
-            },
-            "required": ["pattern"],
-        },
+        "name": "search_files",
+        "description": "Search for files matching a glob pattern",
+        "parameters": {"path": "Search directory", "pattern": "Glob pattern like *.py"},
     },
     {
         "name": "run_command",
-        "description": "Run a shell command in the workspace directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "Shell command to execute",
-                },
-            },
-            "required": ["command"],
-        },
+        "description": "Run a shell command (limited to safe commands)",
+        "parameters": {"command": "Shell command to run"},
     },
 ]
-
-# ── Blocked Commands ────────────────────────────────────
-
-_BLOCKED_PATTERNS = [
-    r"rm\s+-rf\s+/",
-    r"\bsudo\b",
-    r"\bmkfs\b",
-    r"\bdd\s+if=",
-    r"\bshutdown\b",
-    r"\breboot\b",
-    r"\bformat\b\s+[a-zA-Z]:",
-    r"del\s+/[sfq]",
-]
-_BLOCKED_RE = re.compile("|".join(_BLOCKED_PATTERNS), re.IGNORECASE)
-
-MAX_FILE_SIZE = 50_000  # 50KB read limit
-MAX_OUTPUT = 10_000     # 10K chars command output
-CMD_TIMEOUT = 30        # seconds
-
-
-class ToolExecutor:
-    """Executes Claude tools scoped to a workspace directory."""
-
-    def __init__(self, workspace_root: str):
-        self.workspace_root = os.path.realpath(workspace_root)
-
-    # ── Path Safety ─────────────────────────────────────
-
-    def _resolve(self, relative_path: str) -> str:
-        """Resolve relative path and ensure it stays in workspace."""
-        if not relative_path or relative_path in (".", "/", "\\"):
-            return self.workspace_root
-
-        full = os.path.realpath(os.path.join(self.workspace_root, relative_path))
-        if full != self.workspace_root and not full.startswith(self.workspace_root + os.sep):
-            raise PermissionError(f"Access denied: path escapes workspace — {relative_path}")
-        return full
-
-    # ── Tool Dispatch ───────────────────────────────────
-
-    async def execute(self, tool_name: str, tool_input: dict) -> str:
-        """Execute a tool and return string result."""
-        try:
-            if tool_name == "read_file":
-                return self._read_file(tool_input["path"])
-            elif tool_name == "write_file":
-                return self._write_file(tool_input["path"], tool_input["content"])
-            elif tool_name == "list_directory":
-                return self._list_directory(tool_input.get("path", "."))
-            elif tool_name == "search_code":
-                return await self._search_code(
-                    tool_input["pattern"],
-                    tool_input.get("path", "."),
-                    tool_input.get("glob", ""),
-                )
-            elif tool_name == "run_command":
-                return await self._run_command(tool_input["command"])
-            else:
-                return f"ERROR: Unknown tool '{tool_name}'"
-        except PermissionError as e:
-            return f"ERROR: {e}"
-        except FileNotFoundError as e:
-            return f"ERROR: File not found — {e}"
-        except Exception as e:
-            return f"ERROR: {type(e).__name__}: {e}"
-
-    # ── Tool Implementations ────────────────────────────
-
-    def _read_file(self, path: str) -> str:
-        full = self._resolve(path)
-        if not os.path.isfile(full):
-            return f"ERROR: Not a file — {path}"
-        size = os.path.getsize(full)
-        if size > MAX_FILE_SIZE:
-            return f"ERROR: File too large ({size} bytes, max {MAX_FILE_SIZE})"
-        with open(full, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()
-
-    def _write_file(self, path: str, content: str) -> str:
-        full = self._resolve(path)
-        os.makedirs(os.path.dirname(full), exist_ok=True)
-        with open(full, "w", encoding="utf-8") as f:
-            f.write(content)
-        return f"OK: Wrote {len(content)} chars to {path}"
-
-    def _list_directory(self, path: str) -> str:
-        full = self._resolve(path)
-        if not os.path.isdir(full):
-            return f"ERROR: Not a directory — {path}"
-
-        entries = []
-        try:
-            for entry in sorted(os.listdir(full)):
-                entry_path = os.path.join(full, entry)
-                if os.path.isdir(entry_path):
-                    entries.append(f"  {entry}/")
-                else:
-                    size = os.path.getsize(entry_path)
-                    entries.append(f"  {entry} ({size} bytes)")
-        except PermissionError:
-            return f"ERROR: Permission denied reading {path}"
-
-        if not entries:
-            return f"(empty directory: {path})"
-        return f"Contents of {path}:\n" + "\n".join(entries[:100])
-
-    async def _search_code(self, pattern: str, path: str, glob_filter: str) -> str:
-        full = self._resolve(path)
-        if not os.path.isdir(full):
-            return f"ERROR: Not a directory — {path}"
-
-        try:
-            compiled = re.compile(pattern, re.IGNORECASE)
-        except re.error as e:
-            return f"ERROR: Invalid regex — {e}"
-
-        results: list[str] = []
-        count = 0
-        max_results = 30
-
-        for root, _dirs, files in os.walk(full):
-            # Skip common non-code dirs
-            rel_root = os.path.relpath(root, full)
-            if any(skip in rel_root for skip in ["node_modules", ".git", "__pycache__", ".next", "venv"]):
-                continue
-
-            for fname in files:
-                if glob_filter:
-                    from fnmatch import fnmatch
-                    if not fnmatch(fname, glob_filter):
-                        continue
-
-                fpath = os.path.join(root, fname)
-                try:
-                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                        for lineno, line in enumerate(f, 1):
-                            if compiled.search(line):
-                                rel = os.path.relpath(fpath, full)
-                                results.append(f"  {rel}:{lineno}: {line.rstrip()[:120]}")
-                                count += 1
-                                if count >= max_results:
-                                    break
-                except (PermissionError, OSError):
-                    continue
-                if count >= max_results:
-                    break
-            if count >= max_results:
-                break
-
-        if not results:
-            return f"No matches for pattern '{pattern}' in {path}"
-        header = f"Found {count} matches for '{pattern}':\n"
-        return header + "\n".join(results)
-
-    async def _run_command(self, command: str) -> str:
-        if _BLOCKED_RE.search(command):
-            return "ERROR: Command blocked for security reasons"
-
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                cwd=self.workspace_root,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=CMD_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()  # type: ignore[union-attr]
-            return f"ERROR: Command timed out after {CMD_TIMEOUT}s"
-
-        out = stdout.decode("utf-8", errors="replace")[:MAX_OUTPUT]
-        if stderr:
-            err = stderr.decode("utf-8", errors="replace")[:2000]
-            out += f"\nSTDERR:\n{err}"
-        if proc.returncode != 0:
-            out += f"\n(exit code: {proc.returncode})"
-        return out or "(no output)"

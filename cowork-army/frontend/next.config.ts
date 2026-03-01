@@ -1,18 +1,18 @@
 import type { NextConfig } from "next";
 
-const backendUrl = process.env.COWORK_API_URL || "http://localhost:8888";
+const coworkUrl = process.env.COWORK_API_URL || "http://localhost:8888";
 
 const nextConfig: NextConfig = {
-    // output: "standalone", // disabled for Railway compatibility
-    transpilePackages: ["three"],
+    output: "standalone",
     async rewrites() {
         return [
             {
-                source: "/api/:path*",
-                destination: `${backendUrl}/api/:path*`,
+                source: "/cowork-api/:path*",
+                destination: `${coworkUrl}/api/:path*`,
             },
         ];
     },
+    transpilePackages: ["three"],
 };
 
 export default nextConfig;
