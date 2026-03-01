@@ -3,10 +3,10 @@
 providers = ["node"]
 
 [phases.install]
-cmds = ["cd cowork-army/frontend && npm install --legacy-peer-deps"]
+cmds = ["cd frontend && npm install --legacy-peer-deps"]
 
 [phases.build]
-cmds = ["cd cowork-army/frontend && npm run build"]
+cmds = ["cd frontend && npm run build"]
 
 [start]
-cmd = "cd cowork-army/frontend && npm run start"
+cmd = "cd frontend && npm run start"
