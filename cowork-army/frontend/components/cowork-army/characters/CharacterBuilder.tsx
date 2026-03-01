@@ -16,6 +16,18 @@ import {
     RocketFins,
     Laptop,
     Briefcase,
+    Gamepad,
+    ChartScreen,
+    Terminal,
+    Stethoscope,
+    Globe,
+    Gear,
+    KeyCard,
+    Wrench,
+    MonitorStack,
+    Phone,
+    Brain,
+    Package,
 } from "./accessories";
 
 interface CharacterBuilderProps {
@@ -39,6 +51,18 @@ const ACCESSORY_MAP: Record<string, React.FC<{ color: string; scale?: number }>>
     rocket_fins: RocketFins,
     laptop: Laptop,
     briefcase: Briefcase,
+    gamepad: Gamepad,
+    chart_screen: ChartScreen,
+    terminal: Terminal,
+    stethoscope: Stethoscope,
+    globe: Globe,
+    gear: Gear,
+    key_card: KeyCard,
+    wrench: Wrench,
+    monitor_stack: MonitorStack,
+    phone: Phone,
+    brain: Brain,
+    package: Package,
 };
 
 export default function CharacterBuilder({

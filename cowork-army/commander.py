@@ -65,8 +65,8 @@ async def create_dynamic_agent(agent_id: str, name: str, icon: str, domain: str,
     readme = f"# {icon} {name}\n## {domain}\n{desc}\n\n### Skills\n" + "\n".join(f"- {s}" for s in skills)
     readme += f"\n\n### Rules\n" + "\n".join(f"{i+1}. {r}" for i, r in enumerate(rules))
     readme += f"\n\n### System Prompt\n{system_prompt}\n"
-    (ws / "README.md").write_text(readme)
-    (ws / "gorevler.md").write_text(f"# {icon} {name} — Görevler\n\n## Aktif\n_Boş_\n\n## Tamamlanan\n_Boş_\n")
+    (ws / "README.md").write_text(readme, encoding="utf-8")
+    (ws / "gorevler.md").write_text(f"# {icon} {name} — Görevler\n\n## Aktif\n_Boş_\n\n## Tamamlanan\n_Boş_\n", encoding="utf-8")
 
     agent_data = {
         "id": agent_id, "name": name, "icon": icon, "tier": "WORKER",

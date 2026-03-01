@@ -1,6 +1,6 @@
 /**
- * Tests for lib/cowork-api.ts — Frontend API Client
- * Fetch mocking, FormData serialization, error handling.
+ * Tests for lib/cowork-api.ts — Frontend API Client (v7)
+ * Fetch mocking, FormData serialization, error handling, LLM provider settings.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -29,6 +29,8 @@ import {
     getServerInfo,
     getApiKeyStatus,
     saveApiKey,
+    getLlmProvider,
+    setLlmProvider,
 } from "@/lib/cowork-api";
 
 // ── Helpers ─────────────────────────────────────────────
@@ -52,7 +54,7 @@ beforeEach(() => {
 
 describe("Agent Endpoints", () => {
     it("getCoworkAgents fetches /agents", async () => {
-        const agents = [{ id: "commander", name: "Commander" }];
+        const agents = [{ id: "cargo", name: "Cargo Hub" }];
         mockFetch.mockResolvedValue(mockJsonResponse(agents));
 
         const result = await getCoworkAgents();
@@ -64,13 +66,13 @@ describe("Agent Endpoints", () => {
     });
 
     it("getCoworkAgent fetches single agent", async () => {
-        const agent = { id: "web-dev", name: "Full-Stack" };
+        const agent = { id: "full-stack", name: "Full-Stack Dev" };
         mockFetch.mockResolvedValue(mockJsonResponse(agent));
 
-        const result = await getCoworkAgent("web-dev");
+        const result = await getCoworkAgent("full-stack");
         expect(result).toEqual(agent);
         expect(mockFetch).toHaveBeenCalledWith(
-            "/api/agents/web-dev",
+            "/api/agents/full-stack",
             expect.anything()
         );
     });
@@ -78,9 +80,9 @@ describe("Agent Endpoints", () => {
     it("spawnAgent sends POST with task", async () => {
         mockFetch.mockResolvedValue(mockJsonResponse({ status: "thinking" }));
 
-        await spawnAgent("web-dev", "build frontend");
+        await spawnAgent("full-stack", "build frontend");
         expect(mockFetch).toHaveBeenCalledWith(
-            "/api/agents/web-dev/spawn?task=build%20frontend",
+            "/api/agents/full-stack/spawn?task=build%20frontend",
             expect.objectContaining({ method: "POST" })
         );
     });
@@ -88,9 +90,9 @@ describe("Agent Endpoints", () => {
     it("spawnAgent works without task", async () => {
         mockFetch.mockResolvedValue(mockJsonResponse({ status: "thinking" }));
 
-        await spawnAgent("web-dev");
+        await spawnAgent("full-stack");
         expect(mockFetch).toHaveBeenCalledWith(
-            "/api/agents/web-dev/spawn",
+            "/api/agents/full-stack/spawn",
             expect.objectContaining({ method: "POST" })
         );
     });
@@ -98,12 +100,12 @@ describe("Agent Endpoints", () => {
     it("killAgent sends POST", async () => {
         mockFetch.mockResolvedValue(mockJsonResponse({ status: "killed" }));
 
-        const result = await killAgent("web-dev");
+        const result = await killAgent("full-stack");
         expect(result.status).toBe("killed");
     });
 
     it("getAgentStatuses returns dict", async () => {
-        const statuses = { commander: { status: "idle" } };
+        const statuses = { cargo: { status: "idle" } };
         mockFetch.mockResolvedValue(mockJsonResponse(statuses));
 
         const result = await getAgentStatuses();
@@ -113,7 +115,7 @@ describe("Agent Endpoints", () => {
     it("getAgentOutput returns lines", async () => {
         mockFetch.mockResolvedValue(mockJsonResponse({ lines: ["line 1"] }));
 
-        const result = await getAgentOutput("web-dev");
+        const result = await getAgentOutput("full-stack");
         expect(result.lines).toEqual(["line 1"]);
     });
 });
@@ -227,7 +229,7 @@ describe("Error Handling", () => {
             text: () => Promise.resolve("Base agents cannot be deleted"),
         });
 
-        await expect(deleteAgent("commander")).rejects.toThrow("API error 403");
+        await expect(deleteAgent("cargo")).rejects.toThrow("API error 403");
     });
 });
 
@@ -245,10 +247,10 @@ describe("Task Endpoints", () => {
     it("createCoworkTask sends FormData", async () => {
         mockFetch.mockResolvedValue(mockJsonResponse({ id: "task-new" }));
 
-        await createCoworkTask("Test", "Desc", "web-dev", "high");
+        await createCoworkTask("Test", "Desc", "full-stack", "high");
         const fd = mockFetch.mock.calls[0][1].body as FormData;
         expect(fd.get("title")).toBe("Test");
-        expect(fd.get("assigned_to")).toBe("web-dev");
+        expect(fd.get("assigned_to")).toBe("full-stack");
         expect(fd.get("priority")).toBe("high");
     });
 
@@ -313,32 +315,74 @@ describe("Commander Delegation", () => {
 });
 
 // ═══════════════════════════════════════════════════════════
-//  SERVER INFO & SETTINGS
+//  SERVER INFO & SETTINGS (v7 — multi-LLM)
 // ═══════════════════════════════════════════════════════════
 
 describe("Server Info & Settings", () => {
     it("getServerInfo returns server data", async () => {
         mockFetch.mockResolvedValue(
-            mockJsonResponse({ name: "COWORK.ARMY", version: "5.0.0" })
+            mockJsonResponse({ name: "COWORK.ARMY", version: "7.0" })
         );
         const result = await getServerInfo();
         expect(result.name).toBe("COWORK.ARMY");
     });
 
-    it("getApiKeyStatus returns key status", async () => {
+    it("getApiKeyStatus returns key status with provider info", async () => {
         mockFetch.mockResolvedValue(
-            mockJsonResponse({ has_key: true, masked: "sk-ant-a..." })
+            mockJsonResponse({
+                set: true,
+                preview: "sk-ant-a...",
+                active_provider: "anthropic",
+                anthropic: { set: true, preview: "sk-ant-a..." },
+                gemini: { set: false, preview: "" },
+            })
         );
         const result = await getApiKeyStatus();
-        expect(result.has_key).toBe(true);
+        expect(result.set).toBe(true);
+        expect(result.active_provider).toBe("anthropic");
+        expect(result.anthropic.set).toBe(true);
+        expect(result.gemini.set).toBe(false);
     });
 
-    it("saveApiKey sends FormData", async () => {
+    it("saveApiKey sends key and provider via FormData", async () => {
         mockFetch.mockResolvedValue(
-            mockJsonResponse({ status: "saved", masked: "sk-ant-a..." })
+            mockJsonResponse({ status: "saved", provider: "anthropic", preview: "sk-ant-a..." })
+        );
+        await saveApiKey("sk-ant-api03-test-key", "anthropic");
+        const fd = mockFetch.mock.calls[0][1].body as FormData;
+        expect(fd.get("key")).toBe("sk-ant-api03-test-key");
+        expect(fd.get("provider")).toBe("anthropic");
+    });
+
+    it("saveApiKey defaults provider to anthropic", async () => {
+        mockFetch.mockResolvedValue(
+            mockJsonResponse({ status: "saved", provider: "anthropic", preview: "sk-..." })
         );
         await saveApiKey("sk-ant-api03-test-key");
         const fd = mockFetch.mock.calls[0][1].body as FormData;
-        expect(fd.get("api_key")).toBe("sk-ant-api03-test-key");
+        expect(fd.get("key")).toBe("sk-ant-api03-test-key");
+        expect(fd.get("provider")).toBe("anthropic");
+    });
+
+    it("getLlmProvider fetches current provider", async () => {
+        mockFetch.mockResolvedValue(
+            mockJsonResponse({ provider: "anthropic" })
+        );
+        const result = await getLlmProvider();
+        expect(result.provider).toBe("anthropic");
+        expect(mockFetch).toHaveBeenCalledWith(
+            "/api/settings/llm-provider",
+            expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+        );
+    });
+
+    it("setLlmProvider sends provider via FormData", async () => {
+        mockFetch.mockResolvedValue(
+            mockJsonResponse({ status: "ok", provider: "gemini" })
+        );
+        const result = await setLlmProvider("gemini");
+        expect(result.provider).toBe("gemini");
+        const fd = mockFetch.mock.calls[0][1].body as FormData;
+        expect(fd.get("provider")).toBe("gemini");
     });
 });
