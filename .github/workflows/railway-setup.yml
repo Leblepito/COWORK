@@ -17,38 +17,76 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Collect Railway info and configure
+      - name: Diagnose and configure Railway
         run: |
-          REPORT=""
+          REPORT="# Railway Setup Report\n\n"
 
-          # Fix Dockerfile path — railway up runs from cd frontend,
-          # so upload root IS frontend/. Path must be "Dockerfile" not "frontend/Dockerfile"
-          REPORT+="## Fix RAILWAY_DOCKERFILE_PATH\n"
-          FIX_PATH=$(railway variables set RAILWAY_DOCKERFILE_PATH="Dockerfile" \
-            --service frontend --environment production 2>&1) || true
-          REPORT+="\`\`\`\n${FIX_PATH}\n\`\`\`\n\n"
+          # ── Backend Service ──
+          REPORT+="## Backend Service\n\n"
 
-          # Ensure COWORK_API_URL is set for Railway private networking
-          REPORT+="## Set COWORK_API_URL\n"
+          REPORT+="### Variables\n"
+          BACKEND_VARS=$(railway variables --service backend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${BACKEND_VARS}\n\`\`\`\n\n"
+
+          REPORT+="### Domains\n"
+          BACKEND_DOMAIN=$(railway domain --service backend 2>&1) || true
+          REPORT+="\`\`\`\n${BACKEND_DOMAIN}\n\`\`\`\n\n"
+
+          # ── Frontend Service ──
+          REPORT+="## Frontend Service\n\n"
+
+          # Ensure COWORK_API_URL is set
+          REPORT+="### Set COWORK_API_URL\n"
           SET_URL=$(railway variables set COWORK_API_URL="http://backend.railway.internal:8888" \
             --service frontend --environment production 2>&1) || true
           REPORT+="\`\`\`\n${SET_URL}\n\`\`\`\n\n"
 
-          # List domains
-          REPORT+="## Current Domains\n"
-          DOMAINS=$(railway domain --service frontend 2>&1) || true
-          REPORT+="\`\`\`\n${DOMAINS}\n\`\`\`\n\n"
+          REPORT+="### Variables\n"
+          FRONTEND_VARS=$(railway variables --service frontend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${FRONTEND_VARS}\n\`\`\`\n\n"
 
-          # Variables after fix
-          REPORT+="## Frontend Variables\n"
-          VARS=$(railway variables --service frontend --environment production 2>&1) || true
-          REPORT+="\`\`\`\n${VARS}\n\`\`\`\n\n"
+          REPORT+="### Domains\n"
+          FRONTEND_DOMAIN=$(railway domain --service frontend 2>&1) || true
+          REPORT+="\`\`\`\n${FRONTEND_DOMAIN}\n\`\`\`\n\n"
 
-          # Redeploy with corrected config
-          REPORT+="## Redeploy Frontend\n"
+          # ── Health Checks ──
+          REPORT+="## Health Checks\n\n"
+
+          # Extract backend public domain
+          BACKEND_URL=$(echo "$BACKEND_VARS" | grep RAILWAY_PUBLIC_DOMAIN | awk '{print $NF}' || echo "")
+          if [ -n "$BACKEND_URL" ]; then
+            BACKEND_STATUS=$(curl -s -o /tmp/backend_health.txt -w "%{http_code}" "https://${BACKEND_URL}/api/info" || echo "000")
+            BACKEND_BODY=$(cat /tmp/backend_health.txt 2>/dev/null | head -c 500 || echo "no response")
+            REPORT+="Backend (${BACKEND_URL}): HTTP ${BACKEND_STATUS}\n"
+            REPORT+="\`\`\`\n${BACKEND_BODY}\n\`\`\`\n\n"
+          else
+            REPORT+="Backend: Could not determine public URL\n\n"
+          fi
+
+          FRONTEND_STATUS=$(curl -s -o /tmp/frontend_health.txt -w "%{http_code}" "https://ireska.com/" || echo "000")
+          FRONTEND_BODY=$(cat /tmp/frontend_health.txt 2>/dev/null | head -c 500 || echo "no response")
+          REPORT+="Frontend (ireska.com): HTTP ${FRONTEND_STATUS}\n"
+          REPORT+="\`\`\`\n${FRONTEND_BODY}\n\`\`\`\n\n"
+
+          HEALTH_STATUS=$(curl -s -o /tmp/health.txt -w "%{http_code}" "https://ireska.com/api/health" || echo "000")
+          HEALTH_BODY=$(cat /tmp/health.txt 2>/dev/null | head -c 500 || echo "no response")
+          REPORT+="Health endpoint: HTTP ${HEALTH_STATUS}\n"
+          REPORT+="\`\`\`\n${HEALTH_BODY}\n\`\`\`\n\n"
+
+          # ── Redeploy ──
+          REPORT+="## Redeploy\n\n"
+
+          REPORT+="### Backend\n"
+          cd backend
+          DEPLOY_BACK=$(railway up --detach --service backend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${DEPLOY_BACK}\n\`\`\`\n\n"
+          cd ..
+
+          REPORT+="### Frontend\n"
           cd frontend
-          DEPLOY=$(railway up --detach --service frontend --environment production 2>&1) || true
-          REPORT+="\`\`\`\n${DEPLOY}\n\`\`\`\n"
+          DEPLOY_FRONT=$(railway up --detach --service frontend --environment production 2>&1) || true
+          REPORT+="\`\`\`\n${DEPLOY_FRONT}\n\`\`\`\n"
+          cd ..
 
           echo -e "$REPORT" > /tmp/railway-report.md
 

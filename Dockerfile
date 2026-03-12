@@ -10,9 +10,9 @@ RUN npm install --legacy-peer-deps
 # Copy frontend source
 COPY frontend/ .
 
-# Next.js needs NEXT_PUBLIC_* env vars at build time
-ARG NEXT_PUBLIC_COWORK_API_URL
-ENV NEXT_PUBLIC_COWORK_API_URL=${NEXT_PUBLIC_COWORK_API_URL}
+# COWORK_API_URL baked into next.config.ts rewrites at build time
+ARG COWORK_API_URL=http://backend.railway.internal:8888
+ENV COWORK_API_URL=${COWORK_API_URL}
 
 RUN npm run build
 
@@ -20,9 +20,11 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Runtime COWORK_API_URL for API route handler
+ENV COWORK_API_URL=http://backend.railway.internal:8888
+
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-# Copy public directory if it exists
 COPY --from=builder /app/public ./public
 
 # Railway injects PORT env var
