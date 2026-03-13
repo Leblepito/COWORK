@@ -67,3 +67,81 @@ SOFTWARE_TOOLS = [
         "required": ["platform", "build_type"],
     },
 ]
+
+# ── Tool Implementations ──────────────────────────────────────────────────────
+import os as _os
+from datetime import datetime as _datetime
+
+
+def _write_code(filepath: str, content: str, language: str = "python", **kwargs) -> dict:
+    try:
+        workspace = _os.environ.get("WORKSPACE_DIR", "/tmp/cowork_workspace")
+        _os.makedirs(workspace, exist_ok=True)
+        safe_path = _os.path.join(workspace, _os.path.basename(filepath))
+        with open(safe_path, "w") as f:
+            f.write(content)
+        return {"status": "written", "filepath": safe_path, "language": language,
+                "lines": len(content.splitlines()), "bytes": len(content.encode())}
+    except Exception as e:
+        return {"error": str(e), "filepath": filepath}
+
+
+def _run_tests(test_type: str, target: str = ".", framework: str = "pytest", **kwargs) -> dict:
+    return {"status": "simulated", "test_type": test_type, "target": target,
+            "framework": framework, "result": "Tests would run in production environment",
+            "timestamp": _datetime.now().isoformat()}
+
+
+def _design_api(method: str, path: str, description: str, request_body: dict = None,
+                response: dict = None, **kwargs) -> dict:
+    return {"openapi_spec": {
+        "paths": {path: {method.lower(): {
+            "summary": description,
+            "requestBody": {"content": {"application/json": {"schema": request_body or {}}}},
+            "responses": {"200": {"description": "Success",
+                                  "content": {"application/json": {"schema": response or {}}}}}
+        }}}
+    }, "method": method, "path": path, "description": description}
+
+
+def _create_migration(description: str, operations: list, **kwargs) -> dict:
+    ts = _datetime.now().strftime("%Y%m%d_%H%M%S")
+    migration_id = f"{ts}_{description.lower().replace(' ', '_')[:30]}"
+    sql = "\n".join(f"-- {op}" for op in operations)
+    return {"migration_id": migration_id, "description": description,
+            "operations_count": len(operations), "sql_preview": sql,
+            "status": "generated"}
+
+
+def _optimize_prompt(agent_id: str, goal: str, current_prompt: str = "",
+                     test_cases: list = None, **kwargs) -> dict:
+    suggestions = [
+        f"Hedef odaklı: '{goal}' için spesifik talimatlar ekleyin",
+        "Çıktı formatını açıkça belirtin (JSON, markdown, vb.)",
+        "Hata durumlarını ele alın",
+        "Örnekler (few-shot) ekleyin",
+    ]
+    return {"agent_id": agent_id, "goal": goal,
+            "original_length": len(current_prompt),
+            "suggestions": suggestions,
+            "test_cases_count": len(test_cases or []),
+            "status": "analyzed"}
+
+
+def _build_app(platform: str, build_type: str, config: dict = None, **kwargs) -> dict:
+    return {"platform": platform, "build_type": build_type, "config": config or {},
+            "status": "build_queued",
+            "estimated_duration": "3-5 dakika",
+            "timestamp": _datetime.now().isoformat()}
+
+
+SOFTWARE_TOOLS_IMPL = {
+    "write_code": _write_code,
+    "run_tests": _run_tests,
+    "design_api": _design_api,
+    "create_migration": _create_migration,
+    "optimize_prompt": _optimize_prompt,
+    "build_app": _build_app,
+}
+
+SOFTWARE_TOOL_DEFINITIONS = SOFTWARE_TOOLS
