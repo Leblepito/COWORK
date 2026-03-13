@@ -20,14 +20,27 @@ from .llm_providers import get_llm_provider, TOOL_DEFS
 from .tools import read_file, write_file, list_dir, search_files, run_command
 from ..departments.trade.tools_impl import TRADE_TOOLS_IMPL, TRADE_TOOL_DEFINITIONS
 from ..departments.bots.tools import BOTS_TOOLS_IMPL, BOTS_TOOL_DEFINITIONS
+from ..departments.hotel.tools import HOTEL_TOOLS_IMPL, HOTEL_TOOL_DEFINITIONS
+from ..departments.medical.tools import MEDICAL_TOOLS_IMPL, MEDICAL_TOOL_DEFINITIONS
+from ..departments.software.tools import SOFTWARE_TOOLS_IMPL, SOFTWARE_TOOL_DEFINITIONS
 
 # Merge all department tool definitions into the global tool registry
-ALL_TOOL_DEFS = TOOL_DEFS + TRADE_TOOL_DEFINITIONS + BOTS_TOOL_DEFINITIONS
+ALL_TOOL_DEFS = (
+    TOOL_DEFS
+    + TRADE_TOOL_DEFINITIONS
+    + BOTS_TOOL_DEFINITIONS
+    + HOTEL_TOOL_DEFINITIONS
+    + MEDICAL_TOOL_DEFINITIONS
+    + SOFTWARE_TOOL_DEFINITIONS
+)
 
 # Combined tool implementation registry (department-specific tools)
 ALL_TOOLS_IMPL: dict = {}
 ALL_TOOLS_IMPL.update(TRADE_TOOLS_IMPL)
 ALL_TOOLS_IMPL.update(BOTS_TOOLS_IMPL)
+ALL_TOOLS_IMPL.update(HOTEL_TOOLS_IMPL)
+ALL_TOOLS_IMPL.update(MEDICAL_TOOLS_IMPL)
+ALL_TOOLS_IMPL.update(SOFTWARE_TOOLS_IMPL)
 
 MAX_TOOL_ROUNDS = 15  # Max tool-calling iterations per task
 
