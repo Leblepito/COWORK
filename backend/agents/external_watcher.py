@@ -147,13 +147,14 @@ class NewsDataStream(DataStream):
         from xml.etree import ElementTree as ET
         events = []
         feeds = [
-            ("https://feeds.finance.yahoo.com/rss/2.0/headline", "trade", "finance"),
-            ("https://www.who.int/rss-feeds/news-english.xml", "medical", "health"),
+            ("https://feeds.bbci.co.uk/news/business/rss.xml", "trade", "finance"),
+            ("https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml", "engineering", "tech"),
         ]
         async with aiohttp.ClientSession() as session:
             for url, dept, category in feeds:
                 try:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    headers = {"User-Agent": "Mozilla/5.0 (compatible; COWORK-Bot/1.0)"}
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15), headers=headers) as resp:
                         text = await resp.text()
                     root = ET.fromstring(text)
                     items = root.findall(".//item")[:3]  # Son 3 haber
