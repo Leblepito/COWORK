@@ -30,6 +30,7 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 
 
 async def init_db():
-    """Create tables if they don't exist."""
+    """Drop all tables and recreate for fresh schema on each deploy."""
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
