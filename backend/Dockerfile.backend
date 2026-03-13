@@ -28,6 +28,6 @@ ENV PYTHONUNBUFFERED=1
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8888}/api/info')" || exit 1
 
-# Run alembic upgrade (safe — only applies pending migrations, no data loss)
-# then start uvicorn as backend package
-CMD cd /app && python -m alembic -c backend/alembic.ini upgrade head 2>/dev/null; python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}
+# Run alembic upgrade then start uvicorn
+# cd into /app/backend so alembic.ini's script_location=alembic resolves to /app/backend/alembic/
+CMD cd /app/backend && python -m alembic upgrade head 2>/dev/null; cd /app && python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}
