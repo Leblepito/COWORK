@@ -30,7 +30,9 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 
 
 async def init_db():
-    """Drop all tables and recreate for fresh schema on each deploy."""
+    """Create tables if they don't exist (safe for production — no data loss).
+    Schema migrations are handled by Alembic in the Dockerfile CMD.
+    drop_all was removed to prevent accidental data loss on redeploy.
+    """
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)

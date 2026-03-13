@@ -214,7 +214,7 @@ def get_llm_provider(task: str = "") -> AnthropicProvider | GeminiProvider:
         return GeminiProvider(api_key=api_key, model=model)
     if override == "anthropic":
         api_key = _read_env_value("ANTHROPIC_API_KEY")
-        model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-5-haiku-20241022"
+        model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-haiku-20240307"
         return AnthropicProvider(api_key=api_key, model=model)
 
     # --- Auto-select based on task complexity ---
@@ -224,7 +224,7 @@ def get_llm_provider(task: str = "") -> AnthropicProvider | GeminiProvider:
 
     if heavy and anthropic_key:
         # Complex task → Claude
-        model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-5-haiku-20241022"
+        model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-haiku-20240307"
         return AnthropicProvider(api_key=anthropic_key, model=model)
     elif gemini_key:
         # Default / light task → Gemini
@@ -232,7 +232,7 @@ def get_llm_provider(task: str = "") -> AnthropicProvider | GeminiProvider:
         return GeminiProvider(api_key=gemini_key, model=model)
     elif anthropic_key:
         # Gemini unavailable → fall back to Claude
-        model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-5-haiku-20241022"
+        model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-haiku-20240307"
         return AnthropicProvider(api_key=anthropic_key, model=model)
     else:
         raise RuntimeError("No LLM API key configured. Set GEMINI_API_KEY or ANTHROPIC_API_KEY.")
