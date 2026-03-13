@@ -1,12 +1,15 @@
 """
-COWORK.ARMY v8.0 — Multi-LLM Provider Abstraction
+COWORK.ARMY v8.1 — Multi-LLM Provider Abstraction
 Supports Anthropic Claude and Google Gemini with tool-calling.
+Gemini 429 RESOURCE_EXHAUSTED → automatic Anthropic fallback.
 """
 from __future__ import annotations
 import os
-import json
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("cowork.llm")
 
 
 def _read_env_value(key: str) -> str:
@@ -19,6 +22,19 @@ def _read_env_value(key: str) -> str:
                 if line.startswith(f"{key}="):
                     v = line.split("=", 1)[1].strip().strip('"')
     return v
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    """Return True if the exception is a Gemini/Google 429 rate limit error."""
+    msg = str(exc).lower()
+    return (
+        "429" in msg
+        or "resource_exhausted" in msg
+        or "quota" in msg
+        or "rate limit" in msg
+        or getattr(exc, "status_code", None) == 429
+        or getattr(exc, "code", None) == 429
+    )
 
 
 class LLMResponse:
@@ -94,14 +110,24 @@ class AnthropicProvider:
 
 
 class GeminiProvider:
-    """Google Gemini provider with tool-calling support (using google-genai SDK)."""
+    """Google Gemini provider with tool-calling support (using google-genai SDK).
+
+    On 429 RESOURCE_EXHAUSTED, automatically falls back to Anthropic Claude
+    if `anthropic_fallback_key` is provided or ANTHROPIC_API_KEY is set.
+    """
 
     def __init__(self, api_key: str, model: str):
         from google import genai
         self.client = genai.Client(api_key=api_key)
         self.model_name = model or "gemini-2.5-flash"
 
-    def get_response(self, system_prompt: str, messages: list, tools: list) -> LLMResponse:
+    def get_response(
+        self,
+        system_prompt: str,
+        messages: list,
+        tools: list,
+        anthropic_fallback_key: str | None = None,
+    ) -> LLMResponse:
         from google import genai as genai_sdk
         from google.genai import types as genai_types
         import uuid
@@ -151,11 +177,30 @@ class GeminiProvider:
             tools=[genai_types.Tool(function_declarations=tool_declarations)] if tool_declarations else None,
         )
 
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=config,
+            )
+        except Exception as exc:
+            if is_rate_limit_error(exc):
+                # Try Anthropic fallback
+                fallback_key = anthropic_fallback_key or _read_env_value("ANTHROPIC_API_KEY")
+                if fallback_key:
+                    logger.warning(
+                        f"[llm] Gemini 429 rate limit — falling back to Anthropic Claude. "
+                        f"Original error: {exc}"
+                    )
+                    fallback_model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-haiku-20240307"
+                    fallback = AnthropicProvider(api_key=fallback_key, model=fallback_model)
+                    return fallback.get_response(system_prompt, messages, tools)
+                else:
+                    logger.error(
+                        f"[llm] Gemini 429 rate limit and no ANTHROPIC_API_KEY for fallback. "
+                        f"Original error: {exc}"
+                    )
+            raise
 
         # Normalize response
         content = []
@@ -198,14 +243,25 @@ def _is_heavy_task(task: str) -> bool:
     return any(kw in t for kw in _HEAVY_KEYWORDS)
 
 
-def get_llm_provider(task: str = "") -> AnthropicProvider | GeminiProvider:
+def get_llm_provider(
+    task: str = "",
+    force_anthropic: bool = False,
+) -> AnthropicProvider | GeminiProvider:
     """
     Smart LLM factory:
+      - force_anthropic=True → always return AnthropicProvider (used after Gemini 429).
       - Explicit LLM_PROVIDER env var overrides everything.
       - Heavy / complex tasks (plan, project, analysis, long text) → Claude (if key available).
       - Light / quick tasks → Gemini (if key available).
       - Falls back to whichever key is present.
     """
+    # --- Force Anthropic (e.g. after Gemini rate limit) ---
+    if force_anthropic:
+        api_key = _read_env_value("ANTHROPIC_API_KEY")
+        if api_key:
+            model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-haiku-20240307"
+            return AnthropicProvider(api_key=api_key, model=model)
+
     # --- Explicit override ---
     override = _read_env_value("LLM_PROVIDER")
     if override == "gemini":
