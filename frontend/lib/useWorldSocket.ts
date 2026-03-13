@@ -50,9 +50,9 @@ function getWsUrl(): string {
     return "ws://localhost:8888/ws/events";
   }
 
-  // 4. Production fallback — same host via wss (works if backend is co-hosted)
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.host}/ws/events`;
+  // 4. Production fallback — hardcoded Railway backend domain
+  //    Bu URL Railway'deki backend servisinin public domain'i
+  return "wss://backend-production-3ddc.up.railway.app/ws/events";
 }
 
 export function useWorldSocket(): WorldState {
