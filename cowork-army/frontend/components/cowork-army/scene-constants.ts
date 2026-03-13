@@ -261,6 +261,44 @@ export const STATUS_COLORS: Record<string, string> = {
   delivering: "#f59e0b",
 };
 
+/* ── Building Colliders (for pathfinding) ── */
+export interface BuildingCollider {
+  center: [number, number];  // [x, z]
+  halfSize: [number, number]; // [halfWidth, halfDepth]
+}
+
+export const BUILDING_COLLIDERS: BuildingCollider[] = [
+  ...Object.values(BUILDINGS).map(b => ({
+    center: [b.center[0], b.center[2]] as [number, number],
+    halfSize: [b.footprint[0] / 2 + 1, b.footprint[1] / 2 + 1] as [number, number],
+  })),
+  // Cargo hub (circular → approximate as square)
+  { center: [0, 0], halfSize: [CARGO_BUILDING.radius + 0.5, CARGO_BUILDING.radius + 0.5] },
+];
+
+/* ── Agent Life — social spots where agents can meet ── */
+export const SOCIAL_SPOTS: { pos: [number, number, number]; label: string }[] = [
+  { pos: [-8, 0, -8], label: "bench-nw" },
+  { pos: [8, 0, -8], label: "bench-ne" },
+  { pos: [-8, 0, 8], label: "bench-sw" },
+  { pos: [8, 0, 8], label: "bench-se" },
+  { pos: [0, 0, -10], label: "fountain-n" },
+  { pos: [0, 0, 10], label: "fountain-s" },
+  { pos: [-10, 0, 0], label: "garden-w" },
+  { pos: [10, 0, 0], label: "garden-e" },
+];
+
+/** Wandering waypoints — agents stroll through campus when idle */
+export const WANDER_WAYPOINTS: [number, number, number][] = [
+  // Ring road points
+  [8, 0, 0], [6, 0, 6], [0, 0, 8], [-6, 0, 6],
+  [-8, 0, 0], [-6, 0, -6], [0, 0, -8], [6, 0, -6],
+  // Near buildings
+  [-14, 0, -13], [14, 0, -13], [-14, 0, 13], [14, 0, 13],
+  // Social spots
+  [-8, 0, -8], [8, 0, -8], [-8, 0, 8], [8, 0, 8],
+];
+
 /* ── Campus Environment ── */
 
 /** Road paths connecting buildings to central plaza */
