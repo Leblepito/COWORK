@@ -24,11 +24,20 @@ def test_get_gemini_provider():
     assert isinstance(provider, GeminiProvider)
 
 
-@patch.dict(os.environ, {"LLM_PROVIDER": "", "ANTHROPIC_API_KEY": "test_key_default"})
-def test_default_provider_is_anthropic():
-    """Factory should default to Anthropic when LLM_PROVIDER is not set."""
-    provider = get_llm_provider()
+@patch.dict(os.environ, {"LLM_PROVIDER": "", "ANTHROPIC_API_KEY": "test_key_default", "GEMINI_API_KEY": ""}, clear=False)
+def test_default_provider_is_anthropic_when_no_gemini():
+    """Factory should fall back to Anthropic when GEMINI_API_KEY is not set."""
+    with patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
+        provider = get_llm_provider()
     assert isinstance(provider, AnthropicProvider)
+
+
+@patch.dict(os.environ, {"LLM_PROVIDER": "", "ANTHROPIC_API_KEY": "test_key_default", "GEMINI_API_KEY": "test_gemini_key"}, clear=False)
+def test_default_provider_is_gemini_when_available():
+    """Factory should prefer Gemini for light tasks when GEMINI_API_KEY is set."""
+    with patch("google.genai.Client"):
+        provider = get_llm_provider("merhaba")
+    assert isinstance(provider, GeminiProvider)
 
 
 @patch("anthropic.Anthropic")
