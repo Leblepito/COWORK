@@ -1,19 +1,32 @@
 FROM python:3.12-slim
-WORKDIR /srv
 
 # rootDirectory=backend → build context is the backend/ folder
-# All paths are relative to backend/
+# Strategy: copy files to /app/backend/ so they work as a Python package
+# This allows 'from .config import' (relative) AND 'from database.models import' (absolute)
+# by setting PYTHONPATH=/app/backend
+
+WORKDIR /app
+
+# Install dependencies (requirements.txt is in backend/ = build context root)
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all backend source files
-COPY . ./
+# Copy all backend source files into /app/backend/
+COPY . ./backend/
 
 # Create workspace directories
-RUN mkdir -p workspace
+RUN mkdir -p backend/workspace
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+# Set PYTHONPATH so both relative imports and absolute imports work
+# - Relative imports (from .config) work because we run as 'backend.main'
+# - Absolute imports (from database.models) work because /app/backend is in PYTHONPATH
+ENV PYTHONPATH=/app/backend
+ENV PYTHONUNBUFFERED=1
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8888}/api/info')" || exit 1
 
-# Run alembic migrations then start uvicorn
-CMD alembic upgrade head 2>/dev/null; python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8888}
+# Run alembic migrations then start uvicorn as backend package
+# PYTHONPATH=/app/backend ensures alembic can find 'database.models'
+# Running from /app ensures 'backend.main' package path works for relative imports
+CMD cd /app && python -m alembic -c backend/alembic.ini upgrade head 2>/dev/null; python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}
