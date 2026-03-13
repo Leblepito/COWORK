@@ -65,9 +65,9 @@ async def broadcast(message: dict):
     """Broadcast a message to all connected WebSocket clients."""
     text = json.dumps(message, default=str)
     dead = set()
-    for ws in _clients:
+    for ws in list(_clients):  # list() snapshot — iteration sırasında set değişmez
         try:
             await ws.send_text(text)
         except Exception:
             dead.add(ws)
-    _clients -= dead
+    _clients.difference_update(dead)  # in-place, atama yapmaz → UnboundLocalError olmaz
