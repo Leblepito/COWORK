@@ -1,18 +1,20 @@
 FROM python:3.12-slim
 
-# Build context is REPO ROOT (no rootDirectory set in Railway)
-# dockerfilePath = backend/Dockerfile.backend
-# Strategy: copy backend/ into /app/backend/ so relative imports work as a package
+# Build context is backend/ folder (rootDirectory=backend in Railway)
+# Strategy: copy files into /app/backend/ so they work as a Python package
+# This allows 'from .config import' (relative) AND 'from database.models import' (absolute)
+# by setting PYTHONPATH=/app/backend
 
 WORKDIR /app
 
-# Install dependencies from backend/requirements.txt
-COPY backend/requirements.txt ./
+# Install dependencies (requirements.txt is at root of build context = backend/)
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend source files into /app/backend/
+# Copy all backend source files into /app/backend/
+# Build context is backend/, so '.' = backend/ directory
 # This makes 'backend.main', 'backend.config', etc. importable
-COPY backend/ ./backend/
+COPY . ./backend/
 
 # Create workspace directories
 RUN mkdir -p backend/workspace
