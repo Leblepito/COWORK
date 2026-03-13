@@ -25,14 +25,34 @@ interface WorldState {
 
 function getWsUrl(): string {
   if (typeof window === "undefined") return "";
+
+  // 1. Explicit WS host override (Railway env var: NEXT_PUBLIC_COWORK_WS_HOST)
+  //    e.g. NEXT_PUBLIC_COWORK_WS_HOST=backend-production-3ddc.up.railway.app
+  const wsHostOverride = process.env.NEXT_PUBLIC_COWORK_WS_HOST;
+  if (wsHostOverride) {
+    const clean = wsHostOverride.replace(/^wss?:\/\//, "").replace(/\/$/, "");
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${clean}/ws/events`;
+  }
+
+  // 2. Derive from NEXT_PUBLIC_COWORK_API_URL
+  //    e.g. NEXT_PUBLIC_COWORK_API_URL=https://backend-production-3ddc.up.railway.app
+  const apiUrl = process.env.NEXT_PUBLIC_COWORK_API_URL;
+  if (apiUrl) {
+    return apiUrl
+      .replace(/^https:\/\//, "wss://")
+      .replace(/^http:\/\//, "ws://")
+      .replace(/\/$/, "") + "/ws/events";
+  }
+
+  // 3. Local development
+  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+    return "ws://localhost:8888/ws/events";
+  }
+
+  // 4. Production fallback — same host via wss (works if backend is co-hosted)
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  // Railway'de backend URL'i kullan, lokalde localhost:8888
-  const backendHost =
-    process.env.NEXT_PUBLIC_COWORK_WS_HOST ||
-    (window.location.hostname === "localhost"
-      ? "localhost:8888"
-      : window.location.host.replace(/:\d+$/, ":8888"));
-  return `${proto}//${backendHost}/ws/events`;
+  return `${proto}//${window.location.host}/ws/events`;
 }
 
 export function useWorldSocket(): WorldState {
