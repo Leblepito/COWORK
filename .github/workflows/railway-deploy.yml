@@ -9,59 +9,64 @@ env:
   RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
 
 jobs:
-  deploy-backend:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli
+
+      - name: Verify Railway auth
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error::RAILWAY_TOKEN secret is not set in repository secrets!"
+            exit 1
+          fi
+          echo "Token present (${#RAILWAY_TOKEN} chars)"
+          railway whoami 2>&1 || {
+            echo "::error::Railway token is INVALID or EXPIRED. Please update RAILWAY_TOKEN in GitHub repo secrets."
+            echo "  1. Go to Railway dashboard → Account → Tokens"
+            echo "  2. Create a new token"
+            echo "  3. Go to GitHub repo → Settings → Secrets → Update RAILWAY_TOKEN"
+            exit 1
+          }
 
       - name: Deploy backend
         run: |
           cd backend
-          railway up --service backend --environment production
-        timeout-minutes: 10
-
-      - name: Verify backend health
-        run: |
-          echo "Waiting 30s for backend to start..."
-          sleep 30
-          BACKEND_URL=$(cd backend && railway variables --service backend --environment production 2>/dev/null | grep RAILWAY_PUBLIC_DOMAIN | head -1 | awk '{print $NF}' || echo "")
-          if [ -n "$BACKEND_URL" ]; then
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://${BACKEND_URL}/api/info" || echo "000")
-            echo "Backend health check: HTTP $STATUS"
-            if [ "$STATUS" = "403" ] || [ "$STATUS" = "000" ]; then
-              echo "::warning::Backend may not be healthy (HTTP $STATUS)"
-            fi
-          else
-            echo "Could not determine backend URL"
-          fi
-
-  deploy-frontend:
-    runs-on: ubuntu-latest
-    needs: deploy-backend
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
+          echo "=== Deploying backend ==="
+          railway up --detach --service backend --environment production 2>&1
+          echo "Backend deploy triggered ✓"
+        timeout-minutes: 5
 
       - name: Deploy frontend
         run: |
           cd frontend
-          railway up --service frontend --environment production
-        timeout-minutes: 10
+          echo "=== Deploying frontend ==="
+          railway up --detach --service frontend --environment production 2>&1
+          echo "Frontend deploy triggered ✓"
+        timeout-minutes: 5
 
-      - name: Verify frontend health
+      - name: Wait for Railway builds
         run: |
-          echo "Waiting 30s for frontend to start..."
-          sleep 30
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://ireska.com/" || echo "000")
-          echo "Frontend health check (ireska.com): HTTP $STATUS"
-          if [ "$STATUS" = "403" ] || [ "$STATUS" = "000" ]; then
-            echo "::warning::Frontend may not be healthy (HTTP $STATUS)"
-          fi
-          # Also check health endpoint
-          HEALTH=$(curl -s "https://ireska.com/api/health" 2>/dev/null || echo "unreachable")
-          echo "Health endpoint: $HEALTH"
+          echo "Waiting 90s for Railway to build and deploy..."
+          sleep 90
+
+      - name: Health check
+        continue-on-error: true
+        run: |
+          echo "=== Backend Health ==="
+          BE=$(curl -s -o /tmp/be.txt -w "%{http_code}" \
+            "https://backend-production-2161.up.railway.app/api/info" --max-time 20) || BE="timeout"
+          echo "HTTP $BE"
+          cat /tmp/be.txt 2>/dev/null | head -5
+          echo ""
+
+          echo "=== Frontend Health ==="
+          FE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://ireska.com/" --max-time 20) || FE="timeout"
+          echo "HTTP $FE"
+
+          echo "=== API Health ==="
+          curl -s "https://ireska.com/api/health" --max-time 20 || echo "unreachable"

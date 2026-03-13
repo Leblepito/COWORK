@@ -20,6 +20,27 @@ jobs:
       - name: Diagnose and configure Railway
         run: |
           REPORT="# Railway Setup Report\n\n"
+          REPORT+="Generated: $(date -u '+%Y-%m-%d %H:%M UTC')\n\n"
+
+          # ── DNS & Certificate Check ──
+          REPORT+="## DNS & Certificate Check\n\n"
+
+          # Check DNS for ireska.com
+          REPORT+="### ireska.com DNS\n"
+          DNS_A=$(dig +short ireska.com A 2>&1) || DNS_A="lookup failed"
+          DNS_CNAME=$(dig +short ireska.com CNAME 2>&1) || DNS_CNAME="lookup failed"
+          REPORT+="\`\`\`\nA records: ${DNS_A}\nCNAME records: ${DNS_CNAME}\n\`\`\`\n\n"
+
+          # Check DNS for www.ireska.com
+          REPORT+="### www.ireska.com DNS\n"
+          WWW_A=$(dig +short www.ireska.com A 2>&1) || WWW_A="lookup failed"
+          WWW_CNAME=$(dig +short www.ireska.com CNAME 2>&1) || WWW_CNAME="lookup failed"
+          REPORT+="\`\`\`\nA records: ${WWW_A}\nCNAME records: ${WWW_CNAME}\n\`\`\`\n\n"
+
+          # Check SSL certificate
+          REPORT+="### SSL Certificate\n"
+          CERT_INFO=$(echo | openssl s_client -servername ireska.com -connect ireska.com:443 2>/dev/null | openssl x509 -noout -issuer -subject -dates 2>&1) || CERT_INFO="SSL connection failed"
+          REPORT+="\`\`\`\n${CERT_INFO}\n\`\`\`\n\n"
 
           # ── Backend Service ──
           REPORT+="## Backend Service\n\n"
@@ -32,10 +53,21 @@ jobs:
           BACKEND_DOMAIN=$(railway domain --service backend 2>&1) || true
           REPORT+="\`\`\`\n${BACKEND_DOMAIN}\n\`\`\`\n\n"
 
+          # Health check backend
+          REPORT+="### Backend Health\n"
+          BACKEND_URL=$(echo "$BACKEND_VARS" | grep -oP 'RAILWAY_PUBLIC_DOMAIN\s+\K\S+' || echo "")
+          if [ -n "$BACKEND_URL" ]; then
+            BACKEND_STATUS=$(curl -s -o /tmp/backend_health.txt -w "%{http_code}" "https://${BACKEND_URL}/api/info" --max-time 10 2>&1) || BACKEND_STATUS="timeout"
+            BACKEND_BODY=$(cat /tmp/backend_health.txt 2>/dev/null | head -c 500)
+            REPORT+="URL: https://${BACKEND_URL}/api/info\nHTTP Status: ${BACKEND_STATUS}\n\`\`\`\n${BACKEND_BODY}\n\`\`\`\n\n"
+          else
+            REPORT+="Could not determine backend public URL\n\n"
+          fi
+
           # ── Frontend Service ──
           REPORT+="## Frontend Service\n\n"
 
-          # Ensure COWORK_API_URL is set
+          # Set COWORK_API_URL
           REPORT+="### Set COWORK_API_URL\n"
           SET_URL=$(railway variables set COWORK_API_URL="http://backend.railway.internal:8888" \
             --service frontend --environment production 2>&1) || true
@@ -49,29 +81,21 @@ jobs:
           FRONTEND_DOMAIN=$(railway domain --service frontend 2>&1) || true
           REPORT+="\`\`\`\n${FRONTEND_DOMAIN}\n\`\`\`\n\n"
 
-          # ── Health Checks ──
-          REPORT+="## Health Checks\n\n"
-
-          # Extract backend public domain
-          BACKEND_URL=$(echo "$BACKEND_VARS" | grep RAILWAY_PUBLIC_DOMAIN | awk '{print $NF}' || echo "")
-          if [ -n "$BACKEND_URL" ]; then
-            BACKEND_STATUS=$(curl -s -o /tmp/backend_health.txt -w "%{http_code}" "https://${BACKEND_URL}/api/info" || echo "000")
-            BACKEND_BODY=$(cat /tmp/backend_health.txt 2>/dev/null | head -c 500 || echo "no response")
-            REPORT+="Backend (${BACKEND_URL}): HTTP ${BACKEND_STATUS}\n"
-            REPORT+="\`\`\`\n${BACKEND_BODY}\n\`\`\`\n\n"
-          else
-            REPORT+="Backend: Could not determine public URL\n\n"
+          # Health check frontend
+          REPORT+="### Frontend Health\n"
+          FRONTEND_URL=$(echo "$FRONTEND_VARS" | grep -oP 'RAILWAY_PUBLIC_DOMAIN\s+\K\S+' || echo "")
+          if [ -n "$FRONTEND_URL" ]; then
+            FE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://${FRONTEND_URL}" --max-time 10 2>&1) || FE_STATUS="timeout"
+            REPORT+="Railway domain: https://${FRONTEND_URL} → HTTP ${FE_STATUS}\n"
           fi
+          IRESKA_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://ireska.com" --max-time 10 2>&1) || IRESKA_STATUS="timeout"
+          REPORT+="Custom domain: https://ireska.com → HTTP ${IRESKA_STATUS}\n"
+          WWW_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://www.ireska.com" --max-time 10 2>&1) || WWW_STATUS="timeout"
+          REPORT+="Custom domain: https://www.ireska.com → HTTP ${WWW_STATUS}\n\n"
 
-          FRONTEND_STATUS=$(curl -s -o /tmp/frontend_health.txt -w "%{http_code}" "https://ireska.com/" || echo "000")
-          FRONTEND_BODY=$(cat /tmp/frontend_health.txt 2>/dev/null | head -c 500 || echo "no response")
-          REPORT+="Frontend (ireska.com): HTTP ${FRONTEND_STATUS}\n"
-          REPORT+="\`\`\`\n${FRONTEND_BODY}\n\`\`\`\n\n"
-
-          HEALTH_STATUS=$(curl -s -o /tmp/health.txt -w "%{http_code}" "https://ireska.com/api/health" || echo "000")
-          HEALTH_BODY=$(cat /tmp/health.txt 2>/dev/null | head -c 500 || echo "no response")
-          REPORT+="Health endpoint: HTTP ${HEALTH_STATUS}\n"
-          REPORT+="\`\`\`\n${HEALTH_BODY}\n\`\`\`\n\n"
+          # Health endpoint
+          HEALTH_RESP=$(curl -s "https://ireska.com/api/health" --max-time 10 2>&1) || HEALTH_RESP="unreachable"
+          REPORT+="### /api/health\n\`\`\`\n${HEALTH_RESP}\n\`\`\`\n\n"
 
           # ── Redeploy ──
           REPORT+="## Redeploy\n\n"
@@ -96,6 +120,6 @@ jobs:
         run: |
           gh issue create \
             --repo ${{ github.repository }} \
-            --title "Railway Setup — $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --title "Railway Diagnostics — $(date -u '+%Y-%m-%d %H:%M UTC')" \
             --body-file /tmp/railway-report.md \
             || echo "Issue creation failed"

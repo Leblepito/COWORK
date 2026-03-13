@@ -18,8 +18,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 
 # Run alembic migrations then start uvicorn
 # Since rootDir=backend, we're already in the backend context
-# Uvicorn needs to find main:app at the top level of /srv
-CMD alembic upgrade head 2>/dev/null; python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8888}
+CMD alembic upgrade head && echo "Migrations OK" || echo "Migration failed (non-fatal)"; python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8888}
 
 # Cache bust: 20260313-rootdir-backend
 
