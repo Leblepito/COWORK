@@ -19,6 +19,8 @@ export interface AgentMessageEvent {
   id: string;
   from_agent: string;
   to_agent: string;
+  from_dept?: string;
+  to_dept?: string;
   message_type: string;
   priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   payload_summary: string;
