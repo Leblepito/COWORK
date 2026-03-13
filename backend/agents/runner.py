@@ -203,7 +203,7 @@ KURALLAR:
     proc.status = "working"
 
     try:
-        llm = get_llm_provider()
+        llm = get_llm_provider(task)
         provider_name = type(llm).__name__.replace("Provider", "")
         proc.log(f"LLM: {provider_name} hazir")
 
