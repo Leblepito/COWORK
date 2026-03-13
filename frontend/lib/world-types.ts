@@ -47,7 +47,15 @@ export interface CascadeEvent {
   summary?: string;
 }
 
-export type WorldEvent = AgentMessageEvent | ExternalTriggerEvent | CascadeEvent;
+export interface CargoRouteEvent {
+  type: "cargo_route";
+  from_dept?: string;
+  to_dept?: string;
+  summary?: string;
+  timestamp?: string;
+}
+
+export type WorldEvent = AgentMessageEvent | ExternalTriggerEvent | CascadeEvent | CargoRouteEvent;
 
 export interface SchedulerStats {
   queue_size: number;

@@ -32,6 +32,11 @@ import type { WorldEvent, AgentWorldModel } from "@/lib/world-types";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
+// CEO merkezi konumu (tüm departmanların ortasında)
+const CEO_POSITION: [number, number, number] = [0, 0, 0];
+const CARGO_COLOR = "#f472b6";
+const CEO_COLOR = "#ffd700";
+
 const DEPT_POSITIONS: Record<string, [number, number, number]> = {
   trade:    [-9,  0,  -6],
   medical:  [ 0,  0,  -9],
@@ -41,6 +46,7 @@ const DEPT_POSITIONS: Record<string, [number, number, number]> = {
 };
 
 const DEPT_COLORS: Record<string, string> = {
+  management: CEO_COLOR,
   trade:    "#00ff88",
   medical:  "#00ccff",
   hotel:    "#ffaa00",
@@ -49,6 +55,7 @@ const DEPT_COLORS: Record<string, string> = {
 };
 
 const DEPT_LABELS: Record<string, string> = {
+  management: "CEO",
   trade:    "TRADE",
   medical:  "MEDICAL",
   hotel:    "HOTEL",
@@ -57,6 +64,7 @@ const DEPT_LABELS: Record<string, string> = {
 };
 
 const AGENT_MODEL_MAP: Record<string, string> = {
+  management: "/models/trade_agent.glb", // CEO için trade_agent modeli kullanılıyor (placeholder)
   trade:    "/models/trade_agent.glb",
   medical:  "/models/medical_agent.glb",
   hotel:    "/models/hotel_agent.glb",
@@ -74,6 +82,130 @@ const DESK_OFFSETS: [number, number, number][] = [
   [ 1.3, 0,  0.2],
   [ 0.0, 0,  1.4],
 ];
+
+// ─── CEO Binası (Merkezi Kule) ──────────────────────────────────────────────
+
+function CEOBuilding({ isActive }: { isActive: boolean }) {
+  const glowRef = useRef<THREE.PointLight>(null);
+
+  useFrame((state) => {
+    if (glowRef.current) {
+      glowRef.current.intensity = isActive
+        ? 2.5 + Math.sin(state.clock.elapsedTime * 1.8) * 0.8
+        : 0.5;
+    }
+  });
+
+  return (
+    <group position={CEO_POSITION}>
+      {/* Ana kule gövdesi */}
+      <mesh position={[0, 2.5, 0]} castShadow>
+        <cylinderGeometry args={[1.0, 1.3, 5.0, 8]} />
+        <meshStandardMaterial
+          color="#1a1a2e"
+          emissive={CEO_COLOR}
+          emissiveIntensity={isActive ? 0.15 : 0.05}
+          metalness={0.8}
+          roughness={0.2}
+        />
+      </mesh>
+      {/* Üst platform */}
+      <mesh position={[0, 5.2, 0]} castShadow>
+        <cylinderGeometry args={[1.5, 1.0, 0.3, 8]} />
+        <meshStandardMaterial color={CEO_COLOR} emissive={CEO_COLOR} emissiveIntensity={0.6} metalness={0.9} roughness={0.1} />
+      </mesh>
+      {/* Dönen halka */}
+      <mesh position={[0, 3.5, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1.8, 0.06, 8, 32]} />
+        <meshStandardMaterial color={CEO_COLOR} emissive={CEO_COLOR} emissiveIntensity={isActive ? 1.5 : 0.3} toneMapped={false} />
+      </mesh>
+      {/* Kule ışığı */}
+      <pointLight ref={glowRef} color={CEO_COLOR} intensity={isActive ? 2.5 : 0.5} distance={12} position={[0, 5.5, 0]} />
+      {/* Kıvılcım */}
+      {isActive && (
+        <Sparkles count={30} scale={[3, 3, 3]} size={1.8} speed={0.5} color={CEO_COLOR} position={[0, 5.5, 0]} />
+      )}
+      {/* Etiket */}
+      <Billboard position={[0, 7.0, 0]}>
+        <Text fontSize={0.4} color={CEO_COLOR} anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#000">
+          👑 CEO
+        </Text>
+        <Text fontSize={0.2} color="#aaaaaa" anchorX="center" anchorY="middle" position={[0, -0.55, 0]}>
+          {isActive ? "● Analiz ediyor" : "○ Bekliyor"}
+        </Text>
+      </Billboard>
+      {/* Zemin halkası */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]}>
+        <ringGeometry args={[2.0, 2.5, 48]} />
+        <meshBasicMaterial color={CEO_COLOR} transparent opacity={isActive ? 0.6 : 0.15} />
+      </mesh>
+    </group>
+  );
+}
+
+// ─── Cargo Drone (Departmanlar arası uçan teslimat) ───────────────────────────
+
+interface CargoBeamProps {
+  from: [number, number, number];
+  to: [number, number, number];
+  taskTitle: string;
+  onComplete: () => void;
+}
+
+function CargoDrone({ from, to, taskTitle, onComplete }: CargoBeamProps) {
+  const groupRef = useRef<THREE.Group>(null);
+  const t = useRef(0);
+  const done = useRef(false);
+
+  useFrame((_, delta) => {
+    if (!groupRef.current || done.current) return;
+    t.current = Math.min(1, t.current + delta * 0.7);
+    const v = t.current;
+    const arc = Math.sin(v * Math.PI) * 5;
+    groupRef.current.position.set(
+      THREE.MathUtils.lerp(from[0], to[0], v),
+      arc + 1.5,
+      THREE.MathUtils.lerp(from[2], to[2], v)
+    );
+    // Drone yönünü hareket yönüne döndür
+    const angle = Math.atan2(to[0] - from[0], to[2] - from[2]);
+    groupRef.current.rotation.y = angle;
+    if (t.current >= 1) { done.current = true; onComplete(); }
+  });
+
+  return (
+    <group ref={groupRef} position={[from[0], 1.5, from[2]]}>
+      {/* Drone gövdesi */}
+      <mesh>
+        <boxGeometry args={[0.3, 0.1, 0.3]} />
+        <meshStandardMaterial color={CARGO_COLOR} emissive={CARGO_COLOR} emissiveIntensity={0.8} metalness={0.7} />
+      </mesh>
+      {/* Pervane kolları */}
+      {([[-0.25, 0, -0.25], [0.25, 0, -0.25], [-0.25, 0, 0.25], [0.25, 0, 0.25]] as [number,number,number][]).map(([ax, ay, az], i) => (
+        <group key={i} position={[ax, ay, az]}>
+          <mesh>
+            <cylinderGeometry args={[0.12, 0.12, 0.02, 6]} />
+            <meshStandardMaterial color="#333" />
+          </mesh>
+          <pointLight color={CARGO_COLOR} intensity={0.5} distance={1} />
+        </group>
+      ))}
+      {/* Kargo kutusu */}
+      <mesh position={[0, -0.18, 0]}>
+        <boxGeometry args={[0.18, 0.15, 0.18]} />
+        <meshStandardMaterial color="#ffd700" emissive="#ffd700" emissiveIntensity={0.3} />
+      </mesh>
+      {/* Işık */}
+      <pointLight color={CARGO_COLOR} intensity={2} distance={3} />
+      {/* Görev etiketi */}
+      <Billboard position={[0, 0.6, 0]}>
+        <Text fontSize={0.12} color={CARGO_COLOR} anchorX="center" anchorY="middle" outlineWidth={0.015} outlineColor="#000">
+          📦 {taskTitle.slice(0, 20)}
+        </Text>
+      </Billboard>
+    </group>
+  );
+}
 
 // ─── Zemin ───────────────────────────────────────────────────────────────────
 
@@ -279,10 +411,12 @@ function AgentMascot3D({ dept, index, isWorking, agentName, isSelected, onSelect
   const color = DEPT_COLORS[dept] || "#ffffff";
   const [hovered, setHovered] = useState(false);
 
-  // Dünya pozisyonu
-  const deptPos = DEPT_POSITIONS[dept] || [0, 0, 0];
-  const off = DESK_OFFSETS[index % DESK_OFFSETS.length];
+  // Dünya pozisyonu (CEO için kule üstü, diğerleri bina içi)
+  const isCeo = dept === "management";
+  const deptPos = isCeo ? CEO_POSITION : (DEPT_POSITIONS[dept] || [0, 0, 0]);
+  const off = isCeo ? [0, 0, 0] : DESK_OFFSETS[index % DESK_OFFSETS.length];
   const wx = deptPos[0] + off[0];
+  const wy = isCeo ? 5.4 : 0; // CEO kule tepesinde
   const wz = deptPos[2] + off[2];
 
   // GLB içindeki mesh'lerin kendi raycast'ini etkinleştir
@@ -313,7 +447,7 @@ function AgentMascot3D({ dept, index, isWorking, agentName, isSelected, onSelect
       onSelect({
         agentId: agentName,
         dept,
-        worldPos: new THREE.Vector3(wx, 0, wz),
+        worldPos: new THREE.Vector3(wx, wy, wz),
       });
     },
     [agentName, dept, wx, wz, onSelect]
@@ -322,7 +456,7 @@ function AgentMascot3D({ dept, index, isWorking, agentName, isSelected, onSelect
   return (
     <group
       ref={groupRef}
-      position={[wx, 0, wz]}
+      position={[wx, wy, wz]}
       rotation={[0, Math.PI, 0]}
     >
       {/* ── Görünmez ama büyük tıklama alanı (hitbox) ── */}
@@ -529,10 +663,17 @@ interface SceneProps {
 }
 
 interface Beam { id: string; from: string; to: string; color: string; }
+interface CargoDroneData { id: string; from: [number,number,number]; to: [number,number,number]; taskTitle: string; }
 
 function Scene({ events, worldModels, selected, onSelect, onExit }: SceneProps) {
   const [beams, setBeams] = useState<Beam[]>([]);
+  const [drones, setDrones] = useState<CargoDroneData[]>([]);
   const lastLen = useRef(0);
+
+  // CEO aktif mi?
+  const isCeoActive = useMemo(() => {
+    return worldModels.some((m) => m.agent_id === "ceo" && !!m.current_task);
+  }, [worldModels]);
 
   useEffect(() => {
     if (events.length <= lastLen.current) return;
@@ -543,6 +684,19 @@ function Scene({ events, worldModels, selected, onSelect, onExit }: SceneProps) 
         setBeams((p) => [
           ...p.slice(-8),
           { id: `${Date.now()}-${Math.random()}`, from: ev.from_dept!, to: ev.to_dept!, color: DEPT_COLORS[ev.from_dept!] || "#fff" },
+        ]);
+      }
+      // CEO'dan görev delegasyonu → Cargo drone
+      if (ev.type === "cargo_route" && ev.to_dept) {
+        const toPos = DEPT_POSITIONS[ev.to_dept] || [0, 0, 0];
+        setDrones((p) => [
+          ...p.slice(-4),
+          {
+            id: `drone-${Date.now()}-${Math.random()}`,
+            from: CEO_POSITION,
+            to: toPos as [number, number, number],
+            taskTitle: ev.summary || "Görev",
+          },
         ]);
       }
     }
@@ -559,6 +713,19 @@ function Scene({ events, worldModels, selected, onSelect, onExit }: SceneProps) 
       s[dept] = { total: ag.length || 3, active: ag.filter((m) => m.current_task).length };
     }
     return s;
+  }, [worldModels]);
+
+  // CEO agent modeli
+  const ceoAgent = useMemo(() => {
+    const found = worldModels.find((m) => m.agent_id === "ceo");
+    return found || ({
+      agent_id: "ceo",
+      current_task: null,
+      energy_level: 100,
+      expertise_score: 1.0,
+      trust_network: {},
+      idle_timeout_seconds: 60,
+    } as AgentWorldModel);
   }, [worldModels]);
 
   // Agent listesi (placeholder dahil)
@@ -593,6 +760,21 @@ function Scene({ events, worldModels, selected, onSelect, onExit }: SceneProps) 
 
       {/* Zemin */}
       <Ground />
+
+      {/* CEO Merkezi Kule */}
+      <CEOBuilding isActive={isCeoActive} />
+
+      {/* CEO Agent Maskotu (kule üzerinde) */}
+      <Suspense fallback={null}>
+        <AgentMascot3D
+          dept="management"
+          index={0}
+          isWorking={isCeoActive}
+          agentName="ceo"
+          isSelected={selected?.agentId === "ceo"}
+          onSelect={onSelect}
+        />
+      </Suspense>
 
       {/* Binalar + masalar */}
       {Object.entries(DEPT_POSITIONS).map(([dept, pos]) => {
@@ -638,6 +820,17 @@ function Scene({ events, worldModels, selected, onSelect, onExit }: SceneProps) 
           </Suspense>
         ))
       )}
+
+      {/* Cargo Drone'ları (CEO → Departman) */}
+      {drones.map((d) => (
+        <CargoDrone
+          key={d.id}
+          from={d.from}
+          to={d.to}
+          taskTitle={d.taskTitle}
+          onComplete={() => setDrones((p) => p.filter((x) => x.id !== d.id))}
+        />
+      ))}
 
       {/* Mesaj ışınları */}
       {beams.map((b) => (
