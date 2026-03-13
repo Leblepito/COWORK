@@ -152,3 +152,62 @@ async def output(agent_id: str):
 @router.get("/statuses")
 async def statuses():
     return await get_statuses()
+
+
+@router.post("/agents/{agent_id}/collaborate")
+async def collaborate(
+    agent_id: str,
+    partner_id: str = Form(...),
+    task_title: str = Form(...),
+    task_description: str = Form(""),
+):
+    """
+    İki agent arasında işbirliği görevi başlat.
+    Her iki agent'a da TASK-*.json yazar ve spawn eder.
+    """
+    import json, time
+    from pathlib import Path
+    from ..agents.runner import WORKSPACE
+
+    db = get_db()
+    agent_a = await db.get_agent(agent_id)
+    agent_b = await db.get_agent(partner_id)
+    if not agent_a:
+        return {"error": f"Agent bulunamadı: {agent_id}"}
+    if not agent_b:
+        return {"error": f"Partner agent bulunamadı: {partner_id}"}
+
+    ts = int(time.time())
+    collab_task = {
+        "title": task_title,
+        "description": task_description or task_title,
+        "collaboration": True,
+        "partner_agent": partner_id,
+        "partner_name": agent_b["name"],
+        "created_at": __import__("datetime").datetime.utcnow().isoformat(),
+    }
+    partner_task = {
+        **collab_task,
+        "partner_agent": agent_id,
+        "partner_name": agent_a["name"],
+    }
+
+    # Her iki agent'a da inbox'a yaz
+    for aid, task_data in [(agent_id, collab_task), (partner_id, partner_task)]:
+        inbox = WORKSPACE / aid / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / f"TASK-{ts}-collab.json").write_text(json.dumps(task_data, ensure_ascii=False, indent=2))
+
+    # Her iki agent'i spawn et
+    full_task = f"[IŞBIRLIĞI] {task_title} — Partner: {agent_b['name']}. {task_description}"
+    partner_full_task = f"[IŞBIRLIĞI] {task_title} — Partner: {agent_a['name']}. {task_description}"
+
+    result_a = await spawn_agent(agent_id, full_task)
+    result_b = await spawn_agent(partner_id, partner_full_task)
+
+    return {
+        "status": "collaboration_started",
+        "agent_a": {"id": agent_id, "name": agent_a["name"], "result": result_a},
+        "agent_b": {"id": partner_id, "name": agent_b["name"], "result": result_b},
+        "task": task_title,
+    }

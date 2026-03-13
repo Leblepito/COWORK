@@ -27,6 +27,7 @@ import {
 } from "@react-three/drei";
 import * as THREE from "three";
 import type { WorldEvent, AgentWorldModel } from "@/lib/world-types";
+import AgentCommandPanel from "./AgentCommandPanel";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
@@ -922,8 +923,15 @@ export default function World3DScene({
   worldModels: AgentWorldModel[];
 }) {
   const [selected, setSelected] = useState<AgentRef | null>(null);
-  const handleSelect = useCallback((ref: AgentRef) => setSelected(ref), []);
-  const handleExit = useCallback(() => setSelected(null), []);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const handleSelect = useCallback((ref: AgentRef) => {
+    setSelected(ref);
+    setPanelOpen(true);
+  }, []);
+  const handleExit = useCallback(() => {
+    setSelected(null);
+    setPanelOpen(false);
+  }, []);
 
   return (
     <div className="w-full h-full relative" style={{ background: "#050810" }}>
@@ -941,6 +949,15 @@ export default function World3DScene({
 
       {/* Kamera HUD — Canvas DIŞINDA, her zaman tıklanabilir */}
       {selected && <CameraHUD agent={selected} onExit={handleExit} />}
+
+      {/* Agent Komuta Paneli — sağ kenar */}
+      {selected && panelOpen && (
+        <AgentCommandPanel
+          agentId={selected.agentId}
+          dept={selected.dept}
+          onClose={handleExit}
+        />
+      )}
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
 
