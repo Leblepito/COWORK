@@ -19,3 +19,5 @@ COPY --from=builder /app/public ./public
 EXPOSE 3333
 ENV PORT=3333
 CMD ["node", "server.js"]
+
+# Cache bust: 20260313-094015
