@@ -6,7 +6,8 @@
  */
 import Link from "next/link";
 import { useWorldSocket } from "@/lib/useWorldSocket";
-import CityCanvas from "@/components/world/CityCanvas";
+import dynamic from "next/dynamic";
+const World3DScene = dynamic(() => import("@/components/world/World3DScene"), { ssr: false });
 import LiveFeed from "@/components/world/LiveFeed";
 import EconomyPanel from "@/components/world/EconomyPanel";
 import AgentMascot from "@/components/world/AgentMascot";
@@ -100,7 +101,7 @@ export default function WorldPage() {
 
         {/* Orta: Canvas şehir haritası */}
         <main className="flex-1 relative overflow-hidden">
-          <CityCanvas events={events} worldModels={worldModels} />
+          <World3DScene events={events} worldModels={worldModels} />
 
           {/* Boş durum overlay */}
           {worldModels.length === 0 && connectionStatus !== "connecting" && (
