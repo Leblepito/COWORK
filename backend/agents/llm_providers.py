@@ -175,18 +175,67 @@ class GeminiProvider:
         return LLMResponse(stop_reason=stop_reason, content=content, raw=response)
 
 
-def get_llm_provider() -> AnthropicProvider | GeminiProvider:
-    """Factory: returns the configured LLM provider."""
-    provider = _read_env_value("LLM_PROVIDER") or "anthropic"
+# Keywords that signal a heavy / complex task → Claude
+_HEAVY_KEYWORDS = [
+    "plan", "proje", "project", "analiz", "analysis", "strateji", "strategy",
+    "mimari", "architecture", "tasarim", "design", "rapor", "report",
+    "yol haritasi", "roadmap", "entegrasyon", "integration", "sistem", "system",
+    "gelistir", "develop", "yaz ", "olustur", "kur ", "setup",
+    "optimize", "refactor", "debug", "test", "deploy", "migrate",
+    "director", "manager", "koordinat", "coordin", "kapsamli", "comprehensive",
+    "detayli", "detailed", "tam ", "full ", "butun", "complete",
+]
 
-    if provider == "gemini":
+
+def _is_heavy_task(task: str) -> bool:
+    """Return True if the task is complex enough to warrant Claude."""
+    if not task:
+        return False
+    # Long tasks are inherently complex
+    if len(task) > 200:
+        return True
+    t = task.lower()
+    return any(kw in t for kw in _HEAVY_KEYWORDS)
+
+
+def get_llm_provider(task: str = "") -> AnthropicProvider | GeminiProvider:
+    """
+    Smart LLM factory:
+      - Explicit LLM_PROVIDER env var overrides everything.
+      - Heavy / complex tasks (plan, project, analysis, long text) → Claude (if key available).
+      - Light / quick tasks → Gemini (if key available).
+      - Falls back to whichever key is present.
+    """
+    # --- Explicit override ---
+    override = _read_env_value("LLM_PROVIDER")
+    if override == "gemini":
         api_key = _read_env_value("GEMINI_API_KEY")
-        model = _read_env_value("GEMINI_MODEL") or "gemini-1.5-flash"
+        model = _read_env_value("GEMINI_MODEL") or "gemini-2.5-flash"
         return GeminiProvider(api_key=api_key, model=model)
-    else:
+    if override == "anthropic":
         api_key = _read_env_value("ANTHROPIC_API_KEY")
-        model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-haiku-20240307"
+        model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-5-haiku-20241022"
         return AnthropicProvider(api_key=api_key, model=model)
+
+    # --- Auto-select based on task complexity ---
+    gemini_key = _read_env_value("GEMINI_API_KEY")
+    anthropic_key = _read_env_value("ANTHROPIC_API_KEY")
+    heavy = _is_heavy_task(task)
+
+    if heavy and anthropic_key:
+        # Complex task → Claude
+        model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-5-haiku-20241022"
+        return AnthropicProvider(api_key=anthropic_key, model=model)
+    elif gemini_key:
+        # Default / light task → Gemini
+        model = _read_env_value("GEMINI_MODEL") or "gemini-2.5-flash"
+        return GeminiProvider(api_key=gemini_key, model=model)
+    elif anthropic_key:
+        # Gemini unavailable → fall back to Claude
+        model = _read_env_value("ANTHROPIC_MODEL") or "claude-3-5-haiku-20241022"
+        return AnthropicProvider(api_key=anthropic_key, model=model)
+    else:
+        raise RuntimeError("No LLM API key configured. Set GEMINI_API_KEY or ANTHROPIC_API_KEY.")
 
 
 # Unified tool definitions used by all agents
