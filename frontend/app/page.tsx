@@ -1,7 +1,7 @@
 "use client";
 /**
- * COWORK.ARMY v7.0 — Main Dashboard
- * Modern command center with 4 departments, cargo agent, event feed
+ * COWORK.ARMY — Silicon Valley HQ Dashboard
+ * Canlı agent ordusu izleme merkezi
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
@@ -13,10 +13,11 @@ import {
   getDepartments, getCoworkAgents, getAgentStatuses,
   getAutonomousEvents, getAutonomousStatus, getServerInfo,
   startAutonomousLoop, stopAutonomousLoop, uploadCargo,
-  delegateCargo, createCoworkTask, spawnAgent,
+  createCoworkTask, spawnAgent,
 } from "@/lib/cowork-api";
 
-// CEO API
+// ─── CEO API ─────────────────────────────────────────────────────────────────
+
 async function getCeoStatus(): Promise<{ agent_id: string; current_task: string | null; is_active: boolean; tick_count: number; last_run?: string }> {
   const base = process.env.NEXT_PUBLIC_COWORK_API_URL || "";
   const res = await fetch(`${base}/cowork-api/agents/ceo/status`, { cache: "no-store" }).catch(() => null);
@@ -29,12 +30,41 @@ async function triggerCeo(): Promise<void> {
   await fetch(`${base}/cowork-api/agents/ceo/trigger`, { method: "POST" }).catch(() => null);
 }
 
-const DEPT_META: Record<string, { color: string; icon: string; gradient: string }> = {
-  trade:    { color: "#a78bfa", icon: "📈", gradient: "from-violet-500/10 to-purple-600/5" },
-  medical:  { color: "#22d3ee", icon: "🏥", gradient: "from-cyan-500/10 to-teal-600/5" },
-  hotel:    { color: "#f59e0b", icon: "🏨", gradient: "from-amber-500/10 to-orange-600/5" },
-  software: { color: "#22c55e", icon: "💻", gradient: "from-green-500/10 to-emerald-600/5" },
+// ─── Sabitler ─────────────────────────────────────────────────────────────────
+
+const DEPT_META: Record<string, { color: string; icon: string; gradient: string; bgColor: string }> = {
+  trade:    { color: "#00ff88", icon: "📈", gradient: "from-emerald-500/10 to-green-600/5", bgColor: "#00ff8812" },
+  medical:  { color: "#00ccff", icon: "🏥", gradient: "from-cyan-500/10 to-blue-600/5", bgColor: "#00ccff12" },
+  hotel:    { color: "#ffaa00", icon: "🏨", gradient: "from-amber-500/10 to-orange-600/5", bgColor: "#ffaa0012" },
+  software: { color: "#cc44ff", icon: "💻", gradient: "from-purple-500/10 to-violet-600/5", bgColor: "#cc44ff12" },
+  bots:     { color: "#ff4466", icon: "🤖", gradient: "from-rose-500/10 to-red-600/5", bgColor: "#ff446612" },
 };
+
+const STATUS_LABELS: Record<string, string> = {
+  working: "Çalışıyor",
+  thinking: "Düşünüyor",
+  coding: "Kodluyor",
+  searching: "Arıyor",
+  running: "Çalışıyor",
+  idle: "Bekliyor",
+  error: "Hata",
+  done: "Tamamlandı",
+};
+
+const ACTIVE_STATUSES = ["working", "thinking", "coding", "searching", "running"];
+
+// ─── Aktivite öğesi tipi ──────────────────────────────────────────────────────
+
+interface ActivityItem {
+  id: string;
+  time: string;
+  icon: string;
+  text: string;
+  color: string;
+  dept?: string;
+}
+
+// ─── Ana Bileşen ──────────────────────────────────────────────────────────────
 
 export default function Home() {
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -43,23 +73,48 @@ export default function Home() {
   const [events, setEvents] = useState<AutonomousEvent[]>([]);
   const [autoStatus, setAutoStatus] = useState<AutonomousStatus | null>(null);
   const [info, setInfo] = useState<ServerInfo | null>(null);
-  const [connected, setConnected] = useState<boolean | null>(null); // null = loading
+  const [connected, setConnected] = useState<boolean | null>(null);
   const [connError, setConnError] = useState<string>("");
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showCargoModal, setShowCargoModal] = useState(false);
   const [ceoStatus, setCeoStatus] = useState<{ agent_id: string; current_task: string | null; is_active: boolean; tick_count: number; last_run?: string } | null>(null);
   const [ceoTriggering, setCeoTriggering] = useState(false);
+  const [activityFeed, setActivityFeed] = useState<ActivityItem[]>([]);
+  const [totalTasks, setTotalTasks] = useState(0);
+  const [completedTasks, setCompletedTasks] = useState(0);
+  const prevEventsRef = useRef<AutonomousEvent[]>([]);
 
   const fetchAll = useCallback(async () => {
     try {
       const [dep, ag, st, ev, au, inf] = await Promise.all([
         getDepartments(), getCoworkAgents(), getAgentStatuses(),
-        getAutonomousEvents(30), getAutonomousStatus(), getServerInfo(),
+        getAutonomousEvents(50), getAutonomousStatus(), getServerInfo(),
       ]);
       setDepartments(dep); setAgents(ag); setStatuses(st);
       setEvents(ev); setAutoStatus(au); setInfo(inf);
       setConnected(true);
       setConnError("");
+
+      // Aktivite feed'i güncelle
+      if (ev.length > prevEventsRef.current.length) {
+        const newEvs = ev.slice(0, ev.length - prevEventsRef.current.length);
+        const items: ActivityItem[] = newEvs.map(e => ({
+          id: `${e.timestamp}-${Math.random()}`,
+          time: e.timestamp?.split("T")[1]?.split(".")[0] || "",
+          icon: e.type === "task_created" ? "📋" : e.type === "warning" ? "⚠️" : e.type === "inbox_check" ? "📥" : "⚡",
+          text: e.message || e.type,
+          color: e.type === "task_created" ? "#22c55e" : e.type === "warning" ? "#ef4444" : e.type === "inbox_check" ? "#fbbf24" : "#818cf8",
+          dept: e.department_id ?? undefined,
+        }));
+        setActivityFeed(prev => [...items, ...prev].slice(0, 30));
+      }
+      prevEventsRef.current = ev;
+
+      // Görev sayaçları
+      const created = ev.filter(e => e.type === "task_created").length;
+      const done = ev.filter(e => e.message?.toLowerCase().includes("tamamland") || e.message?.toLowerCase().includes("completed")).length;
+      setTotalTasks(created);
+      setCompletedTasks(done);
     } catch (err) {
       setConnected(false);
       setConnError(err instanceof Error ? err.message : String(err));
@@ -68,7 +123,6 @@ export default function Home() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // CEO durumunu periyodik çek
   useEffect(() => {
     getCeoStatus().then(setCeoStatus);
     const iv = setInterval(() => getCeoStatus().then(setCeoStatus), 3000);
@@ -76,85 +130,39 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const iv = setInterval(async () => {
-      try {
-        const [st, ev, au] = await Promise.all([
-          getAgentStatuses(), getAutonomousEvents(30), getAutonomousStatus(),
-        ]);
-        setStatuses(st); setEvents(ev); setAutoStatus(au);
-        setConnected(true);
-      } catch {
-        setConnected(false);
-      }
-    }, 2000);
+    const iv = setInterval(fetchAll, 2000);
     return () => clearInterval(iv);
-  }, []);
+  }, [fetchAll]);
 
-  const liveCount = Object.values(statuses).filter(
-    s => ["working", "thinking", "coding", "searching"].includes(s.status)
-  ).length;
-
+  const liveCount = Object.values(statuses).filter(s => ACTIVE_STATUSES.includes(s.status)).length;
   const agentsByDept = (deptId: string) => agents.filter(a => a.department_id === deptId);
   const liveInDept = (deptId: string) =>
-    agentsByDept(deptId).filter(a => {
-      const s = statuses[a.id]?.status;
-      return s && ["working", "thinking", "coding", "searching"].includes(s);
-    }).length;
+    agentsByDept(deptId).filter(a => ACTIVE_STATUSES.includes(statuses[a.id]?.status || "")).length;
 
-  // Loading state
+  // Loading
   if (connected === null) {
     return (
-      <div className="h-screen flex items-center justify-center">
+      <div className="h-screen flex items-center justify-center" style={{ background: "#040710" }}>
         <div className="text-center">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-2xl mx-auto mb-4 animate-pulse">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4 animate-pulse" style={{ background: "#ffd70015", border: "1px solid #ffd70030" }}>
             👑
           </div>
-          <div className="text-sm font-bold tracking-widest text-gradient mb-1">COWORK.ARMY</div>
-          <div className="text-xs text-gray-500">Baglaniyor...</div>
+          <div className="text-sm font-bold tracking-widest mb-1" style={{ color: "#ffd700" }}>COWORK.ARMY</div>
+          <div className="text-xs" style={{ color: "#334" }}>Silicon Valley HQ bağlanıyor...</div>
         </div>
       </div>
     );
   }
 
-  // Connection error state
+  // Error
   if (connected === false && departments.length === 0) {
     return (
-      <div className="h-screen flex items-center justify-center noise-bg">
+      <div className="h-screen flex items-center justify-center" style={{ background: "#040710" }}>
         <div className="text-center max-w-md mx-auto px-6">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-red-500/20 to-red-600/10 border border-red-500/20 flex items-center justify-center text-3xl mx-auto mb-6">
-            ⚡
-          </div>
-          <h1 className="text-lg font-bold text-white mb-2">Backend Baglantisi Kurulamadi</h1>
-          <p className="text-sm text-gray-400 mb-4 leading-relaxed">
-            COWORK.ARMY backend sunucusuna baglanilamiyor.
-          </p>
-          {connError && (
-            <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-3 mb-4 text-left">
-              <div className="text-[10px] text-red-400/60 mb-1">Hata:</div>
-              <div className="text-xs text-red-300 font-code break-all">{connError}</div>
-            </div>
-          )}
-          <div className="bg-[#0c0d18] border border-[#1a1f35] rounded-xl p-4 text-left mb-6">
-            <div className="text-xs text-gray-500 mb-2 font-medium">API Proxy:</div>
-            <div className="text-xs text-gray-300 font-code break-all mb-3">/cowork-api → backend</div>
-            <div className="text-xs text-gray-500 mb-2 font-medium">Kontrol adimlar:</div>
-            <div className="space-y-2 text-xs font-code">
-              <div className="flex items-start gap-2">
-                <span className="text-amber-400 flex-shrink-0">1.</span>
-                <span className="text-gray-300">Railway backend servisinin calistigini dogrulayin</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-amber-400 flex-shrink-0">2.</span>
-                <span className="text-gray-300">NEXT_PUBLIC_COWORK_API_URL env var kontrolu</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-amber-400 flex-shrink-0">3.</span>
-                <span className="text-gray-300">Browser Console (F12) ile hata detayini gorun</span>
-              </div>
-            </div>
-          </div>
-          <button onClick={fetchAll}
-            className="px-6 py-2.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 text-sm font-semibold hover:bg-amber-500/20 transition-colors">
+          <div className="text-4xl mb-4">⚡</div>
+          <h1 className="text-lg font-bold text-white mb-2">Backend Bağlantısı Kurulamadı</h1>
+          <p className="text-sm text-gray-400 mb-4">{connError}</p>
+          <button onClick={fetchAll} className="px-6 py-2.5 rounded-lg text-sm font-semibold" style={{ background: "#ffd70015", border: "1px solid #ffd70030", color: "#ffd700" }}>
             Tekrar Dene
           </button>
         </div>
@@ -163,324 +171,568 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden noise-bg">
-      {/* HEADER */}
-      <header className="flex items-center justify-between px-5 py-3 border-b border-[#1a1f35] flex-shrink-0 bg-[#0c0d18]/50 backdrop-blur-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-lg shadow-lg shadow-amber-500/10">
-            👑
-          </div>
+    <div className="h-screen flex flex-col overflow-hidden" style={{ background: "#040710", fontFamily: "monospace" }}>
+
+      {/* ═══ HEADER ═══ */}
+      <header style={{
+        background: "rgba(4,7,16,0.95)",
+        borderBottom: "1px solid #0e1a2e",
+        backdropFilter: "blur(16px)",
+        padding: "10px 20px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexShrink: 0,
+        zIndex: 10,
+      }}>
+        {/* Logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 10,
+            background: "linear-gradient(135deg, #ffd700, #ff8800)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 18, boxShadow: "0 0 16px #ffd70040",
+          }}>👑</div>
           <div>
-            <h1 className="text-sm font-extrabold tracking-[3px]">
-              COWORK<span className="text-gradient">.ARMY</span>
-            </h1>
-            <p className="text-[10px] text-gray-500">
-              v{info?.version ?? "7.0"} — {info?.departments ?? 4} Dept — {info?.agents ?? 13} Agents
-            </p>
+            <div style={{ fontSize: 13, fontWeight: 900, letterSpacing: 3, color: "#fff" }}>
+              COWORK<span style={{ color: "#ffd700" }}>.ARMY</span>
+            </div>
+            <div style={{ fontSize: 9, color: "#334", letterSpacing: 1 }}>
+              SILICON VALLEY HQ · v{info?.version ?? "7.0"}
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-5">
-          <StatBadge value={departments.length} label="DEPTS" color="#fbbf24" />
-          <StatBadge value={agents.length} label="AGENTS" />
-          <StatBadge value={liveCount} label="LIVE" color="#22c55e" pulse={liveCount > 0} />
-          <StatBadge value={autoStatus?.tick_count ?? 0} label="TICKS" color="#818cf8" />
-          {connected === false && (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-500/10 border border-red-500/20">
-              <div className="w-1.5 h-1.5 rounded-full bg-red-500 pulse-dot" />
-              <span className="text-[10px] text-red-400 font-medium">Baglanti kesildi</span>
-            </div>
-          )}
-          {connected === true && (
-            <div className="flex items-center gap-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              <span className="text-[10px] text-green-400/60">Online</span>
-            </div>
-          )}
-          <Link
-            href="/world"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-mono font-bold transition-all hover:opacity-80"
+
+        {/* Canlı sayaçlar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+          <HeaderStat value={agents.length} label="ÇALIŞAN" color="#ffd700" />
+          <HeaderStat value={liveCount} label="AKTİF" color="#22c55e" pulse={liveCount > 0} />
+          <HeaderStat value={departments.length} label="DEPT" color="#818cf8" />
+          <HeaderStat value={totalTasks} label="GÖREV" color="#f472b6" />
+          <HeaderStat value={autoStatus?.tick_count ?? 0} label="TICK" color="#00ccff" />
+
+          {/* Otonom mod toggle */}
+          <button
+            onClick={async () => {
+              if (autoStatus?.running) await stopAutonomousLoop();
+              else await startAutonomousLoop();
+              const s = await getAutonomousStatus();
+              setAutoStatus(s);
+            }}
             style={{
-              background: "#00ff8812",
-              border: "1px solid #00ff8833",
-              color: "#00ff88",
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+              border: autoStatus?.running ? "1px solid #22c55e40" : "1px solid #334",
+              background: autoStatus?.running ? "#22c55e12" : "#0a1020",
+              color: autoStatus?.running ? "#22c55e" : "#445",
+              cursor: "pointer", transition: "all 0.2s",
             }}
           >
-            <span>🌍</span>
-            <span>World</span>
+            <span style={{
+              width: 7, height: 7, borderRadius: "50%",
+              background: autoStatus?.running ? "#22c55e" : "#334",
+              animation: autoStatus?.running ? "pulse 1.5s infinite" : "none",
+            }} />
+            {autoStatus?.running ? "OTONOM AÇIK" : "OTONOM KAPALI"}
+          </button>
+
+          {/* World link */}
+          <Link href="/world" style={{
+            display: "flex", alignItems: "center", gap: 6,
+            padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+            border: "1px solid #00ff8833", background: "#00ff8808", color: "#00ff88",
+            textDecoration: "none", transition: "all 0.2s",
+          }}>
+            🌍 3D World
           </Link>
+
+          {/* Bağlantı durumu */}
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{
+              width: 7, height: 7, borderRadius: "50%",
+              background: connected ? "#22c55e" : "#ef4444",
+            }} />
+            <span style={{ fontSize: 9, color: connected ? "#22c55e80" : "#ef444480" }}>
+              {connected ? "ONLINE" : "OFFLINE"}
+            </span>
+          </div>
         </div>
       </header>
 
-      {/* MAIN CONTENT */}
-      <div className="flex-1 overflow-y-auto p-5">
-        {/* DEPARTMENT GRID */}
-        <div className="grid grid-cols-2 gap-4 mb-5 max-w-5xl mx-auto">
-          {["trade", "medical", "hotel", "software"].map(deptId => {
-            const dept = departments.find(d => d.id === deptId);
-            const deptAgents = agentsByDept(deptId);
-            const live = liveInDept(deptId);
-            const meta = DEPT_META[deptId];
+      {/* ═══ MAIN ═══ */}
+      <div style={{ flex: 1, overflow: "hidden", display: "grid", gridTemplateColumns: "1fr 320px", gridTemplateRows: "1fr", gap: 0 }}>
 
-            return (
-              <Link key={deptId} href={`/departments/${deptId}`}
-                className={`group block border rounded-2xl p-5 card-hover bg-gradient-to-br ${meta.gradient}`}
-                style={{ borderColor: `${meta.color}20` }}>
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
-                    style={{ background: `${meta.color}15` }}>
-                    {meta.icon}
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-xs font-bold tracking-wider" style={{ color: meta.color }}>
-                      {dept?.name || deptId.toUpperCase()}
-                    </div>
-                    <div className="text-[10px] text-gray-500 mt-0.5">
-                      {dept?.description || ""}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-lg font-extrabold font-code" style={{ color: live > 0 ? "#22c55e" : `${meta.color}60` }}>
-                      {live}
-                    </div>
-                    <div className="text-[8px] text-gray-500 tracking-widest">LIVE</div>
-                  </div>
-                </div>
-                {/* Agent chips */}
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {deptAgents.map(a => {
-                    const st = statuses[a.id]?.status || "idle";
-                    const isActive = ["working", "thinking", "coding", "searching"].includes(st);
-                    return (
-                      <span key={a.id}
-                        className={`inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg border transition-all ${
-                          isActive ? "glow-active" : ""
-                        }`}
-                        style={{
-                          borderColor: isActive ? "#22c55e40" : `${meta.color}15`,
-                          background: isActive ? "#22c55e08" : `${meta.color}06`,
-                          color: isActive ? "#22c55e" : "#94a3b8",
-                        }}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${isActive ? "bg-green-500 pulse-dot" : "bg-gray-600"}`} />
-                        {a.icon} {a.name}
-                      </span>
-                    );
-                  })}
-                </div>
-                <div className="text-[10px] text-gray-500 group-hover:text-gray-300 transition-colors flex items-center gap-1.5">
-                  <span>3D Sahne</span>
-                  <span className="opacity-40">→</span>
-                  <span style={{ color: meta.color }} className="font-medium">Goruntule</span>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
+        {/* SOL PANEL — Ana içerik */}
+        <div style={{ overflow: "auto", padding: "16px 16px 16px 20px" }}>
 
-        {/* CEO + CARGO + EVENTS ROW */}
-        <div className="grid grid-cols-4 gap-4 max-w-5xl mx-auto">
-          {/* CEO WIDGET */}
-          <div className={`col-span-1 border rounded-2xl p-5 bg-gradient-to-br transition-all duration-500 ${
-            ceoStatus?.is_active
-              ? "border-yellow-500/40 from-yellow-500/10 to-amber-600/5 shadow-lg shadow-yellow-500/10"
-              : "border-yellow-500/15 from-yellow-500/5 to-amber-600/3"
-          }`}>
-            <div className="flex items-center gap-3 mb-3">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl transition-all ${
-                ceoStatus?.is_active ? "bg-yellow-500/20 shadow-md shadow-yellow-500/20" : "bg-yellow-500/8"
-              }`}>
-                👑
-              </div>
-              <div className="flex-1">
-                <div className="text-xs font-bold tracking-wider text-yellow-400">CEO AGENT</div>
-                <div className="text-[10px] text-gray-500 mt-0.5">Sistem yöneticisi</div>
-              </div>
-              {/* Aktif/Pasif göstergesi */}
-              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-all ${
-                ceoStatus?.is_active ? "bg-green-500/15 border border-green-500/30" : "bg-gray-500/8 border border-gray-500/20"
-              }`}>
-                <div className={`w-2 h-2 rounded-full ${
-                  ceoStatus?.is_active ? "bg-green-500 animate-pulse" : "bg-gray-600"
-                }`} />
-                <span className={`text-[10px] font-code ${
-                  ceoStatus?.is_active ? "text-green-400" : "text-gray-500"
-                }`}>
-                  {ceoStatus?.is_active ? "AKTİF" : "PASIF"}
-                </span>
-              </div>
-            </div>
+          {/* CEO + Kontroller */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
 
-            {/* Görev bilgisi */}
-            <div className="mb-3 min-h-[32px]">
-              {ceoStatus?.current_task ? (
-                <div className="text-[11px] text-yellow-300/80 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-3 py-1.5 font-code truncate">
+            {/* CEO Kartı */}
+            <div style={{
+              background: ceoStatus?.is_active ? "rgba(255,215,0,0.06)" : "rgba(10,14,26,0.8)",
+              border: ceoStatus?.is_active ? "1px solid #ffd70040" : "1px solid #0e1a2e",
+              borderRadius: 14, padding: "14px 16px",
+              boxShadow: ceoStatus?.is_active ? "0 0 24px #ffd70020" : "none",
+              transition: "all 0.4s",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 10,
+                  background: ceoStatus?.is_active ? "#ffd70020" : "#0a1020",
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
+                  boxShadow: ceoStatus?.is_active ? "0 0 12px #ffd70040" : "none",
+                }}>👑</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#ffd700", letterSpacing: 1 }}>CEO AGENT</div>
+                  <div style={{ fontSize: 9, color: "#334", marginTop: 1 }}>Sistem yöneticisi</div>
+                </div>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 5,
+                  padding: "3px 8px", borderRadius: 6,
+                  background: ceoStatus?.is_active ? "#22c55e15" : "#0a1020",
+                  border: ceoStatus?.is_active ? "1px solid #22c55e30" : "1px solid #1a2030",
+                }}>
+                  <div style={{
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: ceoStatus?.is_active ? "#22c55e" : "#334",
+                    animation: ceoStatus?.is_active ? "pulse 1.5s infinite" : "none",
+                  }} />
+                  <span style={{ fontSize: 9, color: ceoStatus?.is_active ? "#22c55e" : "#334", fontWeight: 700 }}>
+                    {ceoStatus?.is_active ? "AKTİF" : "PASİF"}
+                  </span>
+                </div>
+              </div>
+
+              {ceoStatus?.current_task && (
+                <div style={{
+                  fontSize: 10, color: "#ffd70099", background: "#ffd70008",
+                  border: "1px solid #ffd70020", borderRadius: 6,
+                  padding: "5px 8px", marginBottom: 8,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
                   ● {ceoStatus.current_task}
                 </div>
-              ) : (
-                <div className="text-[11px] text-gray-600 font-code">
-                  Sonraki analiz bekleniyor...
+              )}
+
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, fontSize: 10 }}>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ color: "#ffd700", fontWeight: 700, fontSize: 14 }}>{ceoStatus?.tick_count ?? 0}</div>
+                  <div style={{ color: "#334", fontSize: 8 }}>ANALİZ</div>
+                </div>
+                <div style={{ flex: 1, color: "#334", fontSize: 9, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {ceoStatus?.last_run
+                    ? `Son: ${new Date(ceoStatus.last_run).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+                    : "Henüz çalışmadı"}
+                </div>
+              </div>
+
+              <button
+                onClick={async () => {
+                  setCeoTriggering(true);
+                  await triggerCeo();
+                  await new Promise(r => setTimeout(r, 800));
+                  setCeoStatus(await getCeoStatus());
+                  setCeoTriggering(false);
+                }}
+                disabled={ceoTriggering || !autoStatus?.running}
+                style={{
+                  width: "100%", padding: "7px 0", borderRadius: 8, fontSize: 10, fontWeight: 700,
+                  border: autoStatus?.running ? "1px solid #ffd70030" : "1px solid #1a2030",
+                  background: autoStatus?.running ? "#ffd70010" : "#0a1020",
+                  color: autoStatus?.running ? "#ffd700" : "#334",
+                  cursor: autoStatus?.running && !ceoTriggering ? "pointer" : "not-allowed",
+                  transition: "all 0.2s",
+                }}
+              >
+                {ceoTriggering ? "⏳ Analiz ediliyor..." : autoStatus?.running ? "📊 Analizi Tetikle" : "Otonom mod kapalı"}
+              </button>
+            </div>
+
+            {/* Cargo + Görev */}
+            <div style={{
+              background: "rgba(10,14,26,0.8)", border: "1px solid #1a1f35",
+              borderRadius: 14, padding: "14px 16px",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "#f472b615", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>📦</div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#f472b6", letterSpacing: 1 }}>CARGO AGENT</div>
+                  <div style={{ fontSize: 9, color: "#334" }}>Görev dağıtıcı</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                <button onClick={() => setShowCargoModal(true)} style={{
+                  padding: "8px 0", borderRadius: 8, fontSize: 10, fontWeight: 700,
+                  border: "1px solid #f472b630", background: "#f472b610", color: "#f472b6",
+                  cursor: "pointer",
+                }}>
+                  📤 Dosya Yükle & Analiz Et
+                </button>
+                <button onClick={() => setShowTaskModal(true)} style={{
+                  padding: "8px 0", borderRadius: 8, fontSize: 10, fontWeight: 700,
+                  border: "1px solid #818cf830", background: "#818cf810", color: "#818cf8",
+                  cursor: "pointer",
+                }}>
+                  📋 Manuel Görev Oluştur
+                </button>
+              </div>
+            </div>
+
+            {/* Sistem İstatistikleri */}
+            <div style={{
+              background: "rgba(10,14,26,0.8)", border: "1px solid #1a1f35",
+              borderRadius: 14, padding: "14px 16px",
+            }}>
+              <div style={{ fontSize: 9, color: "#334", letterSpacing: 2, marginBottom: 12, fontWeight: 700 }}>SİSTEM DURUMU</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <StatCard label="Toplam Çalışan" value={agents.length} color="#ffd700" icon="👥" />
+                <StatCard label="Aktif Şu An" value={liveCount} color="#22c55e" icon="⚡" />
+                <StatCard label="Oluşturulan Görev" value={totalTasks} color="#f472b6" icon="📋" />
+                <StatCard label="Tamamlanan" value={completedTasks} color="#00ccff" icon="✅" />
+              </div>
+            </div>
+          </div>
+
+          {/* Departman Grid */}
+          <div style={{ fontSize: 9, color: "#334", letterSpacing: 2, marginBottom: 10, fontWeight: 700 }}>
+            DEPARTMANLAR — {Object.keys(DEPT_META).length} BÖLÜM
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
+            {Object.entries(DEPT_META).map(([deptId, meta]) => {
+              const dept = departments.find(d => d.id === deptId);
+              const deptAgents = agentsByDept(deptId);
+              const live = liveInDept(deptId);
+              const isActive = live > 0;
+
+              return (
+                <Link key={deptId} href={`/departments/${deptId}`} style={{ textDecoration: "none" }}>
+                  <div style={{
+                    background: isActive ? meta.bgColor : "rgba(8,12,22,0.8)",
+                    border: `1px solid ${isActive ? meta.color + "40" : "#0e1a2e"}`,
+                    borderRadius: 12, padding: "12px 14px",
+                    cursor: "pointer", transition: "all 0.3s",
+                    boxShadow: isActive ? `0 0 20px ${meta.color}15` : "none",
+                  }}>
+                    {/* Başlık */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{ fontSize: 18 }}>{meta.icon}</span>
+                      <div style={{
+                        fontSize: 14, fontWeight: 900, color: isActive ? meta.color : "#334",
+                        textShadow: isActive ? `0 0 8px ${meta.color}` : "none",
+                      }}>
+                        {live}
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: 1, marginBottom: 4 }}>
+                      {dept?.name || deptId.toUpperCase()}
+                    </div>
+
+                    {/* Agent chip'leri */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                      {deptAgents.slice(0, 4).map(a => {
+                        const st = statuses[a.id]?.status || "idle";
+                        const active = ACTIVE_STATUSES.includes(st);
+                        return (
+                          <div key={a.id} style={{
+                            display: "flex", alignItems: "center", gap: 5,
+                            fontSize: 9, padding: "3px 6px", borderRadius: 5,
+                            background: active ? `${meta.color}10` : "rgba(10,14,26,0.6)",
+                            border: `1px solid ${active ? meta.color + "30" : "#0e1a2e"}`,
+                            color: active ? meta.color : "#334",
+                          }}>
+                            <div style={{
+                              width: 5, height: 5, borderRadius: "50%",
+                              background: active ? meta.color : "#1a2030",
+                              flexShrink: 0,
+                              animation: active ? "pulse 1.5s infinite" : "none",
+                            }} />
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {a.icon} {a.name}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div style={{ fontSize: 8, color: "#223", marginTop: 6 }}>
+                      {isActive ? `${live}/${deptAgents.length} aktif →` : "bekliyor →"}
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+
+          {/* Kanban Görev Panosu */}
+          <div style={{ fontSize: 9, color: "#334", letterSpacing: 2, marginBottom: 10, fontWeight: 700 }}>
+            GÖREV PANOSU (SON 30 OLAY)
+          </div>
+          <KanbanBoard events={events} statuses={statuses} agents={agents} />
+        </div>
+
+        {/* SAĞ PANEL — Aktivite Akışı */}
+        <div style={{
+          borderLeft: "1px solid #0e1a2e",
+          display: "flex", flexDirection: "column",
+          overflow: "hidden",
+          background: "rgba(4,7,16,0.95)",
+        }}>
+          {/* Başlık */}
+          <div style={{
+            padding: "12px 16px", borderBottom: "1px solid #0e1a2e",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#818cf8", letterSpacing: 2 }}>CANLI AKTİVİTE</div>
+              <div style={{ fontSize: 8, color: "#223", marginTop: 1 }}>Gerçek zamanlı event akışı</div>
+            </div>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 5,
+              padding: "3px 8px", borderRadius: 6,
+              background: "#22c55e10", border: "1px solid #22c55e20",
+            }}>
+              <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#22c55e", animation: "pulse 1.5s infinite" }} />
+              <span style={{ fontSize: 8, color: "#22c55e", fontWeight: 700 }}>CANLI</span>
+            </div>
+          </div>
+
+          {/* Aktif agent listesi */}
+          <div style={{ padding: "10px 14px", borderBottom: "1px solid #0a1020" }}>
+            <div style={{ fontSize: 8, color: "#223", letterSpacing: 1, marginBottom: 8, fontWeight: 700 }}>ŞU AN ÇALIŞANLAR</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflow: "auto" }}>
+              {Object.entries(statuses)
+                .filter(([, s]) => ACTIVE_STATUSES.includes(s.status))
+                .slice(0, 8)
+                .map(([agentId, s]) => {
+                  const agent = agents.find(a => a.id === agentId);
+                  const dept = agent?.department_id || "";
+                  const meta = DEPT_META[dept];
+                  return (
+                    <div key={agentId} style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      padding: "5px 8px", borderRadius: 7,
+                      background: meta ? `${meta.color}08` : "#0a1020",
+                      border: `1px solid ${meta ? meta.color + "20" : "#0e1a2e"}`,
+                    }}>
+                      <div style={{
+                        width: 6, height: 6, borderRadius: "50%",
+                        background: meta?.color || "#22c55e",
+                        animation: "pulse 1.5s infinite", flexShrink: 0,
+                      }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 9, color: meta?.color || "#22c55e", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {agent?.icon} {agent?.name || agentId}
+                        </div>
+                        <div style={{ fontSize: 8, color: "#334", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {STATUS_LABELS[s.status] || s.status}
+                          {s.lines?.[0] && ` — ${s.lines[0].slice(0, 22)}...`}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              {liveCount === 0 && (
+                <div style={{ fontSize: 9, color: "#223", textAlign: "center", padding: "12px 0" }}>
+                  Aktif agent yok
                 </div>
               )}
             </div>
-
-            {/* İstatistikler */}
-            <div className="flex items-center gap-3 mb-3 text-[10px] font-code">
-              <div className="text-center">
-                <div className="text-yellow-400 font-bold">{ceoStatus?.tick_count ?? 0}</div>
-                <div className="text-gray-600">ANALIZ</div>
-              </div>
-              <div className="w-px h-6 bg-gray-700" />
-              <div className="flex-1 text-gray-500 truncate">
-                {ceoStatus?.last_run
-                  ? `Son: ${new Date(ceoStatus.last_run).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
-                  : "Henüz çalışmadı"}
-              </div>
-            </div>
-
-            {/* Manuel tetikleme */}
-            <button
-              onClick={async () => {
-                setCeoTriggering(true);
-                await triggerCeo();
-                await new Promise(r => setTimeout(r, 800));
-                const s = await getCeoStatus();
-                setCeoStatus(s);
-                setCeoTriggering(false);
-              }}
-              disabled={ceoTriggering || !autoStatus?.running}
-              className={`w-full flex items-center justify-center gap-2 text-[11px] px-4 py-2 rounded-lg font-semibold border transition-all ${
-                ceoTriggering
-                  ? "bg-yellow-500/5 text-yellow-400/50 border-yellow-500/15 cursor-wait"
-                  : autoStatus?.running
-                  ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/25 hover:bg-yellow-500/20 cursor-pointer"
-                  : "bg-gray-500/5 text-gray-600 border-gray-500/15 cursor-not-allowed"
-              }`}
-            >
-              <span>{ceoTriggering ? "⏳" : "📊"}</span>
-              <span>{ceoTriggering ? "Analiz ediliyor..." : autoStatus?.running ? "Analizi Tetikle" : "Otonom mod kapalı"}</span>
-            </button>
           </div>
 
-          {/* CARGO SECTION */}
-          <div className="col-span-2 border border-pink-500/15 rounded-2xl p-5 bg-gradient-to-br from-pink-500/5 to-rose-600/3" style={{gridColumn: 'span 2'}}>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-pink-500/10 flex items-center justify-center text-xl">
-                📦
-              </div>
-              <div className="flex-1">
-                <div className="text-xs font-bold text-pink-400 tracking-wider">CARGO AGENT</div>
-                <div className="text-[10px] text-gray-500 mt-0.5">Dosya analiz & departman routing</div>
-              </div>
-              <StatusIndicator status={statuses["cargo"]?.status || "idle"} />
-            </div>
-            <div className="flex gap-2.5">
-              <ActionButton onClick={() => setShowCargoModal(true)}
-                icon="📤" label="Dosya Yukle" color="pink" />
-              <ActionButton onClick={() => setShowTaskModal(true)}
-                icon="📋" label="Gorev Olustur" color="indigo" />
-              <button onClick={async () => {
-                  if (autoStatus?.running) await stopAutonomousLoop();
-                  else await startAutonomousLoop();
-                  const s = await getAutonomousStatus();
-                  setAutoStatus(s);
-                }}
-                className={`flex items-center gap-1.5 text-[11px] px-4 py-2 rounded-lg font-semibold border transition-all ${
-                  autoStatus?.running
-                    ? "bg-green-500/10 text-green-400 border-green-500/25 hover:bg-green-500/20"
-                    : "bg-gray-500/8 text-gray-400 border-gray-500/20 hover:bg-gray-500/15"
-                }`}>
-                <span className={`w-2 h-2 rounded-full ${autoStatus?.running ? "bg-green-500 pulse-dot" : "bg-gray-600"}`} />
-                {autoStatus?.running ? "Otonom ACIK" : "Otonom KAPALI"}
-              </button>
-            </div>
-          </div>
-
-          {/* EVENT FEED */}
-          <div className="border border-[#1a1f35] rounded-2xl overflow-hidden bg-[#0c0d18]/50">
-            <div className="px-4 py-2.5 text-[10px] text-gray-500 tracking-widest border-b border-[#1a1f35]/50 flex justify-between items-center font-medium">
-              <span>EVENT FEED</span>
-              <span className="text-[10px] text-indigo-400 font-code">{events.length}</span>
-            </div>
-            <div className="h-[180px] overflow-y-auto p-3 space-y-1.5">
-              {events.length === 0 && (
-                <div className="text-center text-[11px] text-gray-600 py-10">Henuz event yok</div>
-              )}
-              {events.map((ev, i) => (
-                <div key={i} className={`text-[11px] p-2 rounded-lg border-l-2 bg-white/[0.01] ${
-                  ev.type === "task_created" ? "border-l-green-500" :
-                  ev.type === "warning" ? "border-l-red-500" :
-                  ev.type === "inbox_check" ? "border-l-amber-500" : "border-l-indigo-500"
-                }`}>
-                  <div className="text-[9px] text-gray-500 font-code">
-                    {ev.timestamp?.split("T")[1]?.split(".")[0]} — {ev.agent_id}
-                    {ev.department_id && (
-                      <span className="ml-1" style={{ color: DEPT_META[ev.department_id]?.color }}>
-                        [{ev.department_id}]
+          {/* Event akışı */}
+          <div style={{ flex: 1, overflow: "auto", padding: "10px 14px" }}>
+            <div style={{ fontSize: 8, color: "#223", letterSpacing: 1, marginBottom: 8, fontWeight: 700 }}>EVENT AKIŞI</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {activityFeed.length === 0 && events.slice(0, 20).map((ev, i) => {
+                const meta = ev.department_id ? DEPT_META[ev.department_id] : null;
+                return (
+                  <div key={i} style={{
+                    padding: "6px 8px", borderRadius: 7,
+                    borderLeft: `2px solid ${ev.type === "task_created" ? "#22c55e" : ev.type === "warning" ? "#ef4444" : "#818cf8"}`,
+                    background: "rgba(10,14,26,0.6)",
+                  }}>
+                    <div style={{ fontSize: 8, color: "#334", marginBottom: 2 }}>
+                      {ev.timestamp?.split("T")[1]?.split(".")[0]}
+                      {ev.department_id && <span style={{ color: meta?.color, marginLeft: 4 }}>[{ev.department_id}]</span>}
+                    </div>
+                    <div style={{ fontSize: 9, color: "#667", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {ev.message}
+                    </div>
+                  </div>
+                );
+              })}
+              {activityFeed.map(item => (
+                <div key={item.id} style={{
+                  padding: "6px 8px", borderRadius: 7,
+                  borderLeft: `2px solid ${item.color}`,
+                  background: "rgba(10,14,26,0.6)",
+                  animation: "fadeIn 0.3s ease",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
+                    <span style={{ fontSize: 10 }}>{item.icon}</span>
+                    <span style={{ fontSize: 8, color: "#334" }}>{item.time}</span>
+                    {item.dept && (
+                      <span style={{ fontSize: 7, color: DEPT_META[item.dept]?.color || "#445", padding: "1px 4px", borderRadius: 3, background: `${DEPT_META[item.dept]?.color || "#445"}15` }}>
+                        {item.dept}
                       </span>
                     )}
                   </div>
-                  <div className="text-gray-400 truncate mt-0.5">{ev.message}</div>
+                  <div style={{ fontSize: 9, color: "#667", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {item.text}
+                  </div>
                 </div>
               ))}
             </div>
           </div>
-        </div>
-
-        {/* SERVER INFO */}
-        <div className="max-w-5xl mx-auto mt-4 flex items-center gap-4 text-[10px] text-gray-600 px-1 font-code">
-          <span>{info?.name} v{info?.version}</span>
-          <span className="text-gray-700">|</span>
-          <span>{info?.agents} agents</span>
-          <span className="text-gray-700">|</span>
-          <span>{info?.departments} departments</span>
-          <span className="text-gray-700">|</span>
-          <span>{autoStatus?.tick_count} ticks</span>
         </div>
       </div>
 
       {/* MODALS */}
       {showTaskModal && <TaskModal agents={agents} departments={departments} onClose={() => setShowTaskModal(false)} />}
       {showCargoModal && <CargoModal onClose={() => setShowCargoModal(false)} />}
+
+      <style>{`
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #040710; }
+        ::-webkit-scrollbar-thumb { background: #1a2a4a; border-radius: 2px; }
+      `}</style>
     </div>
   );
 }
 
-/* ═══ STAT BADGE ═══ */
-function StatBadge({ value, label, color, pulse }: { value: number | string; label: string; color?: string; pulse?: boolean }) {
+// ─── Header İstatistik ────────────────────────────────────────────────────────
+
+function HeaderStat({ value, label, color, pulse }: { value: number | string; label: string; color?: string; pulse?: boolean }) {
   return (
-    <div className="text-center">
-      <div className={`text-base font-extrabold font-code ${pulse ? "glow-active rounded" : ""}`} style={{ color }}>
+    <div style={{ textAlign: "center" }}>
+      <div style={{
+        fontSize: 16, fontWeight: 900, color: color || "#fff",
+        textShadow: pulse && color ? `0 0 8px ${color}` : "none",
+      }}>
         {value}
       </div>
-      <div className="text-[8px] text-gray-500 tracking-widest uppercase font-medium">{label}</div>
+      <div style={{ fontSize: 7, color: "#334", letterSpacing: 1, fontWeight: 700 }}>{label}</div>
     </div>
   );
 }
 
-/* ═══ STATUS INDICATOR ═══ */
-function StatusIndicator({ status }: { status: string }) {
-  const isActive = ["working", "thinking", "coding", "searching"].includes(status);
-  const color = isActive ? "#22c55e" : status === "error" ? "#ef4444" : "#4b5563";
+// ─── Stat Kartı ───────────────────────────────────────────────────────────────
+
+function StatCard({ label, value, color, icon }: { label: string; value: number; color: string; icon: string }) {
   return (
-    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md" style={{ background: `${color}10` }}>
-      <div className={`w-2 h-2 rounded-full ${isActive ? "pulse-dot" : ""}`} style={{ background: color }} />
-      <span className="text-[10px] font-code" style={{ color }}>{status}</span>
+    <div style={{
+      background: `${color}08`, border: `1px solid ${color}20`,
+      borderRadius: 8, padding: "8px 10px", textAlign: "center",
+    }}>
+      <div style={{ fontSize: 14 }}>{icon}</div>
+      <div style={{ fontSize: 16, fontWeight: 900, color, marginTop: 2 }}>{value}</div>
+      <div style={{ fontSize: 7, color: "#334", marginTop: 1 }}>{label}</div>
     </div>
   );
 }
 
-/* ═══ ACTION BUTTON ═══ */
-function ActionButton({ onClick, icon, label, color }: {
-  onClick: () => void; icon: string; label: string; color: string;
+// ─── Kanban Görev Panosu ──────────────────────────────────────────────────────
+
+function KanbanBoard({ events, statuses, agents }: {
+  events: AutonomousEvent[];
+  statuses: Record<string, AgentStatus>;
+  agents: CoworkAgent[];
 }) {
-  const colors: Record<string, string> = {
-    pink: "bg-pink-500/10 text-pink-400 border-pink-500/25 hover:bg-pink-500/20",
-    indigo: "bg-indigo-500/10 text-indigo-400 border-indigo-500/25 hover:bg-indigo-500/20",
-  };
+  const taskEvents = events.filter(e => e.type === "task_created").slice(0, 15);
+  const activeAgents = Object.entries(statuses).filter(([, s]) => ACTIVE_STATUSES.includes(s.status));
+  const doneEvents = events.filter(e =>
+    e.message?.toLowerCase().includes("tamamland") || e.message?.toLowerCase().includes("completed")
+  ).slice(0, 8);
+
+  const columns = [
+    {
+      title: "📥 Bekliyor",
+      color: "#fbbf24",
+      items: taskEvents.slice(0, 5).map(e => ({
+        id: e.timestamp,
+        text: e.message || e.type,
+        dept: e.department_id,
+        time: e.timestamp?.split("T")[1]?.split(".")[0],
+      })),
+    },
+    {
+      title: "⚡ Çalışıyor",
+      color: "#22c55e",
+      items: activeAgents.slice(0, 5).map(([id, s]) => {
+        const agent = agents.find(a => a.id === id);
+        return {
+          id,
+          text: `${agent?.name || id}: ${STATUS_LABELS[s.status] || s.status}`,
+          dept: agent?.department_id,
+          time: "şu an",
+        };
+      }),
+    },
+    {
+      title: "✅ Tamamlandı",
+      color: "#00ccff",
+      items: doneEvents.slice(0, 5).map(e => ({
+        id: e.timestamp,
+        text: e.message || "Tamamlandı",
+        dept: e.department_id,
+        time: e.timestamp?.split("T")[1]?.split(".")[0],
+      })),
+    },
+  ];
+
   return (
-    <button onClick={onClick}
-      className={`flex items-center gap-1.5 text-[11px] px-4 py-2 rounded-lg font-semibold border transition-all ${colors[color]}`}>
-      {icon} {label}
-    </button>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+      {columns.map(col => (
+        <div key={col.title} style={{
+          background: "rgba(8,12,22,0.8)",
+          border: `1px solid ${col.color}20`,
+          borderRadius: 10, overflow: "hidden",
+        }}>
+          <div style={{
+            padding: "8px 12px", borderBottom: `1px solid ${col.color}20`,
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: col.color }}>{col.title}</span>
+            <span style={{
+              fontSize: 9, color: col.color, background: `${col.color}15`,
+              padding: "1px 6px", borderRadius: 10,
+            }}>{col.items.length}</span>
+          </div>
+          <div style={{ padding: "8px", display: "flex", flexDirection: "column", gap: 5, minHeight: 80 }}>
+            {col.items.length === 0 ? (
+              <div style={{ fontSize: 9, color: "#223", textAlign: "center", padding: "16px 0" }}>Boş</div>
+            ) : (
+              col.items.map(item => {
+                const meta = item.dept ? DEPT_META[item.dept] : null;
+                return (
+                  <div key={item.id} style={{
+                    padding: "6px 8px", borderRadius: 6,
+                    background: meta ? `${meta.color}08` : "rgba(10,14,26,0.6)",
+                    border: `1px solid ${meta ? meta.color + "20" : "#0e1a2e"}`,
+                  }}>
+                    <div style={{ fontSize: 9, color: "#667", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {item.text}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+                      {item.dept && (
+                        <span style={{ fontSize: 7, color: meta?.color || "#445", padding: "1px 4px", borderRadius: 3, background: `${meta?.color || "#445"}15` }}>
+                          {item.dept}
+                        </span>
+                      )}
+                      <span style={{ fontSize: 7, color: "#223" }}>{item.time}</span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -503,40 +755,44 @@ function TaskModal({ agents, departments, onClose }: {
   const filteredAgents = deptId ? agents.filter(a => a.department_id === deptId) : agents;
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-[#0f1019] border border-amber-500/20 rounded-2xl p-6 w-[460px] shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h2 className="text-sm font-bold text-amber-400 mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">📋</span>
-          Gorev Olustur
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)",
+      zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center",
+    }} onClick={onClose}>
+      <div style={{
+        background: "#0a0e1a", border: "1px solid #818cf830", borderRadius: 18,
+        padding: 24, width: 460, boxShadow: "0 0 40px #818cf820",
+      }} onClick={e => e.stopPropagation()}>
+        <h2 style={{ fontSize: 13, fontWeight: 700, color: "#818cf8", marginBottom: 20, display: "flex", alignItems: "center", gap: 8, fontFamily: "monospace" }}>
+          <span style={{ width: 32, height: 32, borderRadius: 8, background: "#818cf810", display: "flex", alignItems: "center", justifyContent: "center" }}>📋</span>
+          Görev Oluştur
         </h2>
-        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Gorev basligi"
-          className="w-full bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg mb-3 focus:border-amber-500/40 focus:outline-none transition-colors" />
-        <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="Aciklama (opsiyonel)"
-          className="w-full bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg mb-3 h-20 resize-none focus:border-amber-500/40 focus:outline-none transition-colors" />
-        <div className="flex gap-2 mb-4">
+        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Görev başlığı"
+          style={{ width: "100%", background: "#060810", border: "1px solid #1e293b", color: "#fff", fontSize: 12, padding: "10px 12px", borderRadius: 8, marginBottom: 10, outline: "none", fontFamily: "monospace", boxSizing: "border-box" }} />
+        <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="Açıklama (opsiyonel)"
+          style={{ width: "100%", background: "#060810", border: "1px solid #1e293b", color: "#fff", fontSize: 12, padding: "10px 12px", borderRadius: 8, marginBottom: 10, height: 80, resize: "none", outline: "none", fontFamily: "monospace", boxSizing: "border-box" }} />
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
           <select value={deptId} onChange={e => { setDeptId(e.target.value); setAgent(""); }}
-            className="flex-1 bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg">
-            <option value="">Tum Departmanlar</option>
+            style={{ flex: 1, background: "#060810", border: "1px solid #1e293b", color: "#fff", fontSize: 11, padding: "8px 10px", borderRadius: 8, fontFamily: "monospace" }}>
+            <option value="">Tüm Departmanlar</option>
             {departments.map(d => <option key={d.id} value={d.id}>{d.icon} {d.name}</option>)}
           </select>
           <select value={agent} onChange={e => setAgent(e.target.value)}
-            className="flex-1 bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg">
+            style={{ flex: 1, background: "#060810", border: "1px solid #1e293b", color: "#fff", fontSize: 11, padding: "8px 10px", borderRadius: 8, fontFamily: "monospace" }}>
             <option value="">📦 Auto (Cargo)</option>
             {filteredAgents.map(a => <option key={a.id} value={a.id}>{a.icon} {a.name}</option>)}
           </select>
           <select value={priority} onChange={e => setPriority(e.target.value)}
-            className="w-28 bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg">
+            style={{ width: 100, background: "#060810", border: "1px solid #1e293b", color: "#fff", fontSize: 11, padding: "8px 10px", borderRadius: 8, fontFamily: "monospace" }}>
             <option>normal</option><option>high</option><option>urgent</option>
           </select>
         </div>
-        <div className="flex gap-2">
-          <button onClick={submit}
-            className="px-5 py-2.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/25 text-xs font-semibold hover:bg-indigo-500/20 transition-colors">
-            Olustur
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={submit} style={{ padding: "9px 20px", borderRadius: 8, background: "#818cf810", color: "#818cf8", border: "1px solid #818cf825", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "monospace" }}>
+            Oluştur
           </button>
-          <button onClick={onClose}
-            className="px-5 py-2.5 rounded-lg bg-gray-500/8 text-gray-400 border border-gray-500/20 text-xs font-semibold hover:bg-gray-500/15 transition-colors">
-            Iptal
+          <button onClick={onClose} style={{ padding: "9px 20px", borderRadius: 8, background: "#0a1020", color: "#445", border: "1px solid #1a2030", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "monospace" }}>
+            İptal
           </button>
         </div>
       </div>
@@ -559,72 +815,67 @@ function CargoModal({ onClose }: { onClose: () => void }) {
       const r = await uploadCargo(file || undefined, description || undefined);
       setResult(r);
     } catch {
-      setResult({ success: false, error: "Upload hatasi" } as CargoResult);
+      setResult({ success: false, error: "Upload hatası" } as CargoResult);
     }
     setLoading(false);
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-[#0f1019] border border-pink-500/20 rounded-2xl p-6 w-[460px] shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h2 className="text-sm font-bold text-pink-400 mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg bg-pink-500/10 flex items-center justify-center">📦</span>
-          Cargo — Dosya Yukle
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)",
+      zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center",
+    }} onClick={onClose}>
+      <div style={{
+        background: "#0a0e1a", border: "1px solid #f472b630", borderRadius: 18,
+        padding: 24, width: 460, boxShadow: "0 0 40px #f472b620",
+      }} onClick={e => e.stopPropagation()}>
+        <h2 style={{ fontSize: 13, fontWeight: 700, color: "#f472b6", marginBottom: 20, display: "flex", alignItems: "center", gap: 8, fontFamily: "monospace" }}>
+          <span style={{ width: 32, height: 32, borderRadius: 8, background: "#f472b610", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</span>
+          Cargo — Dosya Yükle
         </h2>
 
         {!result ? (
           <>
-            <div className="border-2 border-dashed border-pink-500/20 rounded-xl p-8 text-center mb-4 cursor-pointer hover:border-pink-400/40 transition-colors"
-              onClick={() => fileRef.current?.click()}>
-              <input ref={fileRef} type="file" className="hidden" onChange={e => setFile(e.target.files?.[0] || null)} />
+            <div style={{
+              border: "2px dashed #f472b620", borderRadius: 12, padding: "28px 0",
+              textAlign: "center", cursor: "pointer", marginBottom: 12,
+            }} onClick={() => fileRef.current?.click()}>
+              <input ref={fileRef} type="file" style={{ display: "none" }} onChange={e => setFile(e.target.files?.[0] || null)} />
               {file ? (
-                <div className="text-xs text-pink-400 font-medium">{file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
+                <div style={{ fontSize: 11, color: "#f472b6", fontFamily: "monospace" }}>{file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
               ) : (
                 <div>
-                  <div className="text-2xl mb-2">📂</div>
-                  <div className="text-xs text-gray-500">Dosya secmek icin tiklayin</div>
+                  <div style={{ fontSize: 28, marginBottom: 6 }}>📂</div>
+                  <div style={{ fontSize: 11, color: "#334", fontFamily: "monospace" }}>Dosya seçmek için tıklayın</div>
                 </div>
               )}
             </div>
             <textarea value={description} onChange={e => setDescription(e.target.value)}
-              placeholder="Aciklama veya icerik (opsiyonel)"
-              className="w-full bg-[#0a0b12] border border-[#1e293b] text-white text-xs p-3 rounded-lg mb-4 h-20 resize-none focus:border-pink-500/40 focus:outline-none transition-colors" />
-            <div className="flex gap-2">
-              <button onClick={submit} disabled={loading}
-                className="px-5 py-2.5 rounded-lg bg-pink-500/10 text-pink-400 border border-pink-500/25 text-xs font-semibold disabled:opacity-50 hover:bg-pink-500/20 transition-colors">
-                {loading ? "Analiz ediliyor..." : "📤 Yukle & Analiz Et"}
+              placeholder="Açıklama veya içerik (opsiyonel)"
+              style={{ width: "100%", background: "#060810", border: "1px solid #1e293b", color: "#fff", fontSize: 11, padding: "10px 12px", borderRadius: 8, marginBottom: 12, height: 70, resize: "none", outline: "none", fontFamily: "monospace", boxSizing: "border-box" }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={submit} disabled={loading} style={{ padding: "9px 20px", borderRadius: 8, background: "#f472b610", color: "#f472b6", border: "1px solid #f472b625", fontSize: 11, fontWeight: 700, cursor: loading ? "wait" : "pointer", fontFamily: "monospace" }}>
+                {loading ? "Analiz ediliyor..." : "📤 Yükle & Analiz Et"}
               </button>
-              <button onClick={onClose}
-                className="px-5 py-2.5 rounded-lg bg-gray-500/8 text-gray-400 border border-gray-500/20 text-xs font-semibold hover:bg-gray-500/15 transition-colors">
-                Iptal
+              <button onClick={onClose} style={{ padding: "9px 20px", borderRadius: 8, background: "#0a1020", color: "#445", border: "1px solid #1a2030", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "monospace" }}>
+                İptal
               </button>
             </div>
           </>
         ) : (
-          <div className="space-y-3">
-            <div className={`flex items-center gap-2 text-sm font-semibold ${result.success ? "text-green-400" : "text-red-400"}`}>
-              <span>{result.success ? "✓" : "✕"}</span>
-              {result.success ? "Basarili!" : "Hata: " + result.error}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: result.success ? "#22c55e" : "#ef4444" }}>
+              {result.success ? "✓ Başarılı!" : "✕ Hata: " + result.error}
             </div>
             {result.success && (
-              <div className="bg-[#0a0b12] rounded-xl p-4 space-y-2">
+              <div style={{ background: "#060810", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
                 <InfoRow label="Hedef Departman" value={result.target_department_id} />
                 <InfoRow label="Hedef Agent" value={result.target_agent_id} />
-                <InfoRow label="Guven" value={`${result.confidence}%`} />
-                {result.reasoning && (
-                  <div className="text-[11px] text-gray-400 mt-2 pt-2 border-t border-[#1a1f35]">{result.reasoning}</div>
-                )}
-                {result.keywords_found && result.keywords_found.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {result.keywords_found.map((k, i) => (
-                      <span key={i} className="text-[10px] px-2 py-0.5 rounded-md bg-pink-500/10 text-pink-300">{k}</span>
-                    ))}
-                  </div>
-                )}
+                <InfoRow label="Güven" value={`${result.confidence}%`} />
+                {result.reasoning && <div style={{ fontSize: 10, color: "#667", marginTop: 4, paddingTop: 8, borderTop: "1px solid #1a2030" }}>{result.reasoning}</div>}
               </div>
             )}
-            <button onClick={onClose}
-              className="px-5 py-2.5 rounded-lg bg-gray-500/8 text-gray-400 border border-gray-500/20 text-xs font-semibold hover:bg-gray-500/15 transition-colors mt-2">
+            <button onClick={onClose} style={{ padding: "9px 20px", borderRadius: 8, background: "#0a1020", color: "#445", border: "1px solid #1a2030", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "monospace", alignSelf: "flex-start" }}>
               Kapat
             </button>
           </div>
@@ -636,9 +887,9 @@ function CargoModal({ onClose }: { onClose: () => void }) {
 
 function InfoRow({ label, value }: { label: string; value?: string | null }) {
   return (
-    <div className="flex items-center justify-between text-xs">
-      <span className="text-gray-500">{label}</span>
-      <span className="text-white font-medium font-code">{value || "—"}</span>
+    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontFamily: "monospace" }}>
+      <span style={{ color: "#445" }}>{label}</span>
+      <span style={{ color: "#fff", fontWeight: 700 }}>{value || "—"}</span>
     </div>
   );
 }

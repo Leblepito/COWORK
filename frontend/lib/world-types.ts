@@ -7,6 +7,8 @@ export type Department = "trade" | "medical" | "hotel" | "software" | "bots";
 
 export interface AgentWorldModel {
   agent_id: string;
+  name?: string;
+  department_id?: string;
   expertise_score: number;
   energy_level: number;
   current_task: string | null;
@@ -21,6 +23,7 @@ export interface AgentMessageEvent {
   to_agent: string;
   from_dept?: string;
   to_dept?: string;
+  title?: string;
   message_type: string;
   priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   payload_summary: string;
@@ -34,6 +37,7 @@ export interface ExternalTriggerEvent {
   source: string;
   category: string;
   severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  title?: string;
   summary: string;
   target_departments: string[];
   timestamp: string;
@@ -44,6 +48,7 @@ export interface CascadeEvent {
   cascade_id: string;
   affected_departments: string[];
   depth?: number;
+  title?: string;
   summary?: string;
 }
 
@@ -51,6 +56,7 @@ export interface CargoRouteEvent {
   type: "cargo_route";
   from_dept?: string;
   to_dept?: string;
+  title?: string;
   summary?: string;
   timestamp?: string;
 }
