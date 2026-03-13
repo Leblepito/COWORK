@@ -44,6 +44,23 @@ ALL_TOOLS_IMPL.update(SOFTWARE_TOOLS_IMPL)
 
 MAX_TOOL_ROUNDS = 15  # Max tool-calling iterations per task
 
+# Department → tool definitions mapping
+_DEPT_TOOL_DEFS: dict[str, list] = {
+    "trade": TRADE_TOOL_DEFINITIONS,
+    "bots": BOTS_TOOL_DEFINITIONS,
+    "hotel": HOTEL_TOOL_DEFINITIONS,
+    "medical": MEDICAL_TOOL_DEFINITIONS,
+    "software": SOFTWARE_TOOL_DEFINITIONS,
+}
+
+
+def get_tools_for_dept(dept_id: str) -> list:
+    """Return base tools + department-specific tools for the given department.
+    Keeps token count low by not sending irrelevant tool schemas to the LLM.
+    """
+    dept_tools = _DEPT_TOOL_DEFS.get(dept_id, [])
+    return TOOL_DEFS + dept_tools
+
 
 def _sync_db(coro):
     """Run an async DB coroutine from a sync thread context."""
@@ -225,7 +242,8 @@ KURALLAR:
 
         for round_num in range(MAX_TOOL_ROUNDS):
             proc.log(f"Tur {round_num + 1}/{MAX_TOOL_ROUNDS}...")
-            response = llm.get_response(sys_prompt, messages, ALL_TOOL_DEFS)
+            dept_tools = get_tools_for_dept(dept_id)
+            response = llm.get_response(sys_prompt, messages, dept_tools)
 
             if response.stop_reason == "tool_use":
                 tool_results = []

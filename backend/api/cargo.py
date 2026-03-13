@@ -4,6 +4,7 @@ COWORK.ARMY v7.0 — Cargo API Routes
 from fastapi import APIRouter, UploadFile, File, Form
 from ..database import get_db
 from ..cargo.agent import process_cargo, delegate_task
+from ..cargo.file_extractor import extract_text
 
 router = APIRouter(prefix="/api/cargo", tags=["cargo"])
 
@@ -14,16 +15,19 @@ async def upload_and_route(
     description: str = Form(""),
     content: str = Form(""),
 ):
-    """Upload a file or text content, analyze it, and route to the right agent."""
+    """Upload a file or text content, analyze it, and route to the right agent.
+    Supports: .txt, .csv, .xlsx, .xls, .pdf, .docx, .json, .py, .ts, images, and any binary.
+    """
     filename = ""
     file_content = content
-    file_size = len(content)
+    file_size = len(content.encode("utf-8"))
     file_type = ""
 
     if file:
         filename = file.filename or ""
         raw = await file.read()
-        file_content = raw.decode("utf-8", errors="replace")[:50000]
+        # Use smart extractor — handles all formats, never raises
+        file_content = extract_text(raw, filename, file.content_type or "")
         file_size = len(raw)
         file_type = file.content_type or ""
 
