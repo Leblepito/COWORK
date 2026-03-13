@@ -17,4 +17,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Alembic runs from backend/ (needs "from database.models import Base")
 # Uvicorn runs from /srv (needs "backend.main:app" for relative imports)
-CMD cd /srv/backend && alembic upgrade head 2>/dev/null; cd /srv && python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}
+CMD cd /srv/backend && alembic upgrade head && echo "Migrations OK" || echo "Migration failed (non-fatal)"; cd /srv && python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}
