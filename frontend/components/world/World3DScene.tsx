@@ -1,28 +1,16 @@
 "use client";
 /**
- * COWORK.ARMY — World3DScene v2
- * SimCity tarzı 3D dünya — bina içi görünüm + 3. şahıs kamera takibi
- *
- * Mimari:
- * - Binalar: şeffaf cam cepheli prosedürel geometry (GLB değil)
- *   → kamera içine girebilir, agent'lar içerde görünür
- * - Agent maskotları: Meshy.ai GLB modelleri, bina içinde masada çalışır
- * - Kamera: genel SimCity görünümü VEYA seçili agenti 3. şahıs takip
- * - Mesaj ışınları: departmanlar arası bezier yay
+ * COWORK.ARMY — World3DScene
+ * SimCity tarzı 3D dünya — React Three Fiber + Meshy.ai 3D modelleri
+ * Departman binaları, hareketli maskotlar, agent mesaj animasyonları
  */
-import {
-  Suspense,
-  useRef,
-  useEffect,
-  useState,
-  useMemo,
-  useCallback,
-} from "react";
+import { Suspense, useRef, useEffect, useState, useMemo } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import {
   useGLTF,
   OrbitControls,
   Environment,
+  Float,
   Html,
   Billboard,
   Text,
@@ -33,17 +21,13 @@ import type { WorldEvent, AgentWorldModel } from "@/lib/world-types";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
-/** Departman merkezleri (dünya koordinatları) */
 const DEPT_POSITIONS: Record<string, [number, number, number]> = {
-  trade:    [-9,  0,  -6],
-  medical:  [ 0,  0,  -8],
-  hotel:    [ 9,  0,  -6],
-  software: [-6,  0,   6],
-  bots:     [ 6,  0,   6],
+  trade:    [-6,  0,  -4],
+  medical:  [ 0,  0,  -6],
+  hotel:    [ 6,  0,  -4],
+  software: [-4,  0,   4],
+  bots:     [ 4,  0,   4],
 };
-
-/** Bina boyutları [genişlik, yükseklik, derinlik] */
-const BUILDING_SIZE: [number, number, number] = [4.5, 4, 4.5];
 
 const DEPT_COLORS: Record<string, string> = {
   trade:    "#00ff88",
@@ -69,52 +53,49 @@ const AGENT_MODEL_MAP: Record<string, string> = {
   bots:     "/models/bots_agent.glb",
 };
 
-/** Bina içindeki masa pozisyonları (bina merkezine göre offset) */
-const DESK_OFFSETS: [number, number, number][] = [
-  [-1.2, 0,  -1.2],
-  [ 1.2, 0,  -1.2],
-  [-1.2, 0,   0.2],
-  [ 1.2, 0,   0.2],
-  [ 0,   0,   1.2],
-  [-1.2, 0,   1.2],
-  [ 1.2, 0,   1.2],
-];
-
 // ─── Zemin ───────────────────────────────────────────────────────────────────
 
 function Ground() {
   return (
-    <>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.02, 0]}>
-        <planeGeometry args={[60, 60]} />
-        <meshStandardMaterial color="#080c18" roughness={0.95} metalness={0.05} />
-      </mesh>
-      <gridHelper args={[60, 60, "#141c3a", "#0d1228"]} position={[0, 0, 0]} />
-    </>
+    <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.05, 0]}>
+      <planeGeometry args={[40, 40]} />
+      <meshStandardMaterial
+        color="#0a0e1a"
+        roughness={0.9}
+        metalness={0.1}
+      />
+    </mesh>
   );
 }
 
-// ─── Yol bağlantıları ─────────────────────────────────────────────────────────
-
-function Roads() {
-  const depts = Object.values(DEPT_POSITIONS);
+// Izgara çizgileri
+function GridLines() {
+  const gridRef = useRef<THREE.GridHelper>(null);
   return (
-    <>
-      {depts.map((pos, i) => (
-        <mesh
-          key={i}
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[pos[0] / 2, 0.001, pos[2] / 2]}
-        >
-          <planeGeometry args={[Math.abs(pos[0]) * 0.9 + 0.5, 0.6]} />
-          <meshStandardMaterial color="#1a2040" roughness={1} />
-        </mesh>
-      ))}
-    </>
+    <gridHelper
+      ref={gridRef}
+      args={[40, 40, "#1a2040", "#0f1530"]}
+      position={[0, 0, 0]}
+    />
   );
 }
 
-// ─── Şeffaf Cam Bina ──────────────────────────────────────────────────────────
+// ─── Çevre modeli (Silicon Valley) ───────────────────────────────────────────
+
+function SiliconValleyEnv() {
+  const { scene } = useGLTF("/models/silicon_valley_env.glb");
+  const cloned = useMemo(() => scene.clone(), [scene]);
+  return (
+    <primitive
+      object={cloned}
+      scale={[0.8, 0.8, 0.8]}
+      position={[0, 0, 0]}
+      receiveShadow
+    />
+  );
+}
+
+// ─── Ofis Binası ─────────────────────────────────────────────────────────────
 
 interface BuildingProps {
   dept: string;
@@ -122,322 +103,207 @@ interface BuildingProps {
   isActive: boolean;
   agentCount: number;
   activeCount: number;
-  onClick: () => void;
 }
 
-function GlassBuilding({ dept, position, isActive, agentCount, activeCount, onClick }: BuildingProps) {
-  const color = DEPT_COLORS[dept] || "#ffffff";
-  const colorObj = new THREE.Color(color);
-  const glowRef = useRef<THREE.PointLight>(null);
-  const frameRef = useRef<THREE.Group>(null);
-  const [hovered, setHovered] = useState(false);
-  const [W, H, D] = BUILDING_SIZE;
-
-  useFrame((state) => {
-    if (glowRef.current) {
-      glowRef.current.intensity = isActive
-        ? 1.2 + Math.sin(state.clock.elapsedTime * 2.5) * 0.4
-        : hovered ? 0.6 : 0.15;
-    }
-  });
-
-  return (
-    <group
-      position={position}
-      onPointerEnter={() => { setHovered(true); document.body.style.cursor = "pointer"; }}
-      onPointerLeave={() => { setHovered(false); document.body.style.cursor = "default"; }}
-      onClick={onClick}
-    >
-      {/* ── Zemin plakası ── */}
-      <mesh position={[0, -0.05, 0]} receiveShadow>
-        <boxGeometry args={[W + 0.4, 0.1, D + 0.4]} />
-        <meshStandardMaterial color={colorObj} roughness={0.6} metalness={0.4} />
-      </mesh>
-
-      {/* ── Cam duvarlar (4 yüz, şeffaf) ── */}
-      {/* Ön */}
-      <mesh position={[0, H / 2, D / 2]} castShadow>
-        <boxGeometry args={[W, H, 0.08]} />
-        <meshPhysicalMaterial
-          color={colorObj}
-          transparent
-          opacity={hovered ? 0.18 : 0.12}
-          roughness={0.05}
-          metalness={0.1}
-          transmission={0.8}
-          thickness={0.5}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      {/* Arka */}
-      <mesh position={[0, H / 2, -D / 2]} castShadow>
-        <boxGeometry args={[W, H, 0.08]} />
-        <meshPhysicalMaterial
-          color={colorObj}
-          transparent
-          opacity={hovered ? 0.18 : 0.12}
-          roughness={0.05}
-          metalness={0.1}
-          transmission={0.8}
-          thickness={0.5}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      {/* Sol */}
-      <mesh position={[-W / 2, H / 2, 0]} castShadow>
-        <boxGeometry args={[0.08, H, D]} />
-        <meshPhysicalMaterial
-          color={colorObj}
-          transparent
-          opacity={hovered ? 0.18 : 0.12}
-          roughness={0.05}
-          metalness={0.1}
-          transmission={0.8}
-          thickness={0.5}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      {/* Sağ */}
-      <mesh position={[W / 2, H / 2, 0]} castShadow>
-        <boxGeometry args={[0.08, H, D]} />
-        <meshPhysicalMaterial
-          color={colorObj}
-          transparent
-          opacity={hovered ? 0.18 : 0.12}
-          roughness={0.05}
-          metalness={0.1}
-          transmission={0.8}
-          thickness={0.5}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-
-      {/* ── Tavan ── */}
-      <mesh position={[0, H, 0]} castShadow>
-        <boxGeometry args={[W, 0.12, D]} />
-        <meshStandardMaterial color={colorObj} roughness={0.4} metalness={0.6} />
-      </mesh>
-
-      {/* ── Çerçeve kolonları ── */}
-      {[
-        [-W / 2, D / 2], [W / 2, D / 2],
-        [-W / 2, -D / 2], [W / 2, -D / 2],
-      ].map(([cx, cz], i) => (
-        <mesh key={i} position={[cx, H / 2, cz]} castShadow>
-          <boxGeometry args={[0.18, H, 0.18]} />
-          <meshStandardMaterial color={colorObj} roughness={0.3} metalness={0.8} />
-        </mesh>
-      ))}
-
-      {/* ── İç tavan ışığı ── */}
-      <pointLight
-        ref={glowRef}
-        color={color}
-        intensity={isActive ? 1.2 : 0.15}
-        distance={6}
-        position={[0, H - 0.3, 0]}
-      />
-
-      {/* ── Aktif kıvılcım ── */}
-      {isActive && (
-        <Sparkles
-          count={15}
-          scale={[W, 1, D]}
-          size={1.2}
-          speed={0.3}
-          color={color}
-          position={[0, H + 0.3, 0]}
-        />
-      )}
-
-      {/* ── Departman etiketi ── */}
-      <Billboard position={[0, H + 0.9, 0]}>
-        <Text
-          fontSize={0.32}
-          color={color}
-          anchorX="center"
-          anchorY="middle"
-          outlineWidth={0.025}
-          outlineColor="#000000"
-        >
-          {DEPT_LABELS[dept]}
-        </Text>
-        <Text
-          fontSize={0.2}
-          color="#aaaaaa"
-          anchorX="center"
-          anchorY="middle"
-          position={[0, -0.42, 0]}
-        >
-          {activeCount}/{agentCount} aktif
-        </Text>
-      </Billboard>
-
-      {/* ── Zemin halkası ── */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
-        <ringGeometry args={[2.4, 2.7, 48]} />
-        <meshBasicMaterial
-          color={color}
-          transparent
-          opacity={isActive ? 0.5 : hovered ? 0.3 : 0.1}
-        />
-      </mesh>
-    </group>
-  );
-}
-
-// ─── Masa ─────────────────────────────────────────────────────────────────────
-
-function Desk({ position, color }: { position: [number, number, number]; color: string }) {
-  return (
-    <group position={position}>
-      {/* Masa yüzeyi */}
-      <mesh position={[0, 0.38, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.7, 0.06, 0.5]} />
-        <meshStandardMaterial color="#1a2040" roughness={0.6} metalness={0.3} />
-      </mesh>
-      {/* Masa bacakları */}
-      {[[-0.3, 0.19, -0.2], [0.3, 0.19, -0.2], [-0.3, 0.19, 0.2], [0.3, 0.19, 0.2]].map(
-        ([lx, ly, lz], i) => (
-          <mesh key={i} position={[lx, ly, lz]} castShadow>
-            <boxGeometry args={[0.05, 0.38, 0.05]} />
-            <meshStandardMaterial color="#0d1228" roughness={0.8} />
-          </mesh>
-        )
-      )}
-      {/* Monitör */}
-      <mesh position={[0, 0.65, -0.15]} castShadow>
-        <boxGeometry args={[0.4, 0.28, 0.03]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} roughness={0.2} />
-      </mesh>
-    </group>
-  );
-}
-
-// ─── Agent Maskotu (bina içinde) ──────────────────────────────────────────────
-
-export interface AgentRef {
-  agentId: string;
-  dept: string;
-  worldPos: THREE.Vector3;
-}
-
-interface MascotProps {
-  dept: string;
-  index: number;
-  isWorking: boolean;
-  agentName: string;
-  isSelected: boolean;
-  onSelect: (ref: AgentRef) => void;
-  registerRef: (id: string, dept: string, pos: THREE.Vector3) => void;
-}
-
-function AgentMascot3D({
-  dept,
-  index,
-  isWorking,
-  agentName,
-  isSelected,
-  onSelect,
-  registerRef,
-}: MascotProps) {
-  const modelPath = AGENT_MODEL_MAP[dept] || AGENT_MODEL_MAP["trade"];
-  const { scene } = useGLTF(modelPath);
+function DeptBuilding({ dept, position, isActive, agentCount, activeCount }: BuildingProps) {
+  const { scene } = useGLTF("/models/office_building.glb");
   const cloned = useMemo(() => scene.clone(), [scene]);
   const groupRef = useRef<THREE.Group>(null);
+  const glowRef = useRef<THREE.PointLight>(null);
   const color = DEPT_COLORS[dept] || "#ffffff";
   const [hovered, setHovered] = useState(false);
-
-  // Bina içindeki masa pozisyonu
-  const deptPos = DEPT_POSITIONS[dept] || [0, 0, 0];
-  const deskOffset = DESK_OFFSETS[index % DESK_OFFSETS.length];
-  const worldX = deptPos[0] + deskOffset[0];
-  const worldZ = deptPos[2] + deskOffset[2];
-
-  useEffect(() => {
-    if (groupRef.current) {
-      const wp = new THREE.Vector3(worldX, 0, worldZ);
-      registerRef(agentName, dept, wp);
-    }
-  }, [agentName, dept, worldX, worldZ, registerRef]);
 
   useFrame((state) => {
     if (!groupRef.current) return;
-    if (isWorking) {
-      // Çalışırken hafif baş sallama
-      groupRef.current.position.y = Math.abs(Math.sin(state.clock.elapsedTime * 2.5 + index * 1.1)) * 0.06;
-      // Monitöre bak (biraz öne eğil)
-      groupRef.current.rotation.x = -0.05;
+    // Aktif olduğunda hafif yüzer
+    if (isActive) {
+      groupRef.current.position.y = position[1] + Math.sin(state.clock.elapsedTime * 2) * 0.05;
     } else {
-      groupRef.current.position.y = 0;
-      groupRef.current.rotation.x = 0;
-      // Idle: hafif sağa-sola sallan
-      groupRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.8 + index) * 0.15;
+      groupRef.current.position.y = position[1];
+    }
+    // Glow efekti
+    if (glowRef.current) {
+      glowRef.current.intensity = isActive
+        ? 1.5 + Math.sin(state.clock.elapsedTime * 3) * 0.5
+        : hovered ? 0.8 : 0.2;
     }
   });
 
   return (
     <group
       ref={groupRef}
-      position={[worldX, 0, worldZ]}
-      rotation={[0, Math.PI, 0]} // monitöre baksın
-      onPointerEnter={() => { setHovered(true); document.body.style.cursor = "pointer"; }}
-      onPointerLeave={() => { setHovered(false); document.body.style.cursor = "default"; }}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (groupRef.current) {
-          const wp = new THREE.Vector3(worldX, 0, worldZ);
-          onSelect({ agentId: agentName, dept, worldPos: wp });
-        }
-      }}
+      position={position}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
     >
-      {/* Maskot GLB */}
-      <primitive object={cloned} scale={[0.22, 0.22, 0.22]} castShadow />
-
-      {/* Seçili halkası */}
-      {isSelected && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-          <ringGeometry args={[0.28, 0.36, 32]} />
-          <meshBasicMaterial color={color} transparent opacity={0.9} />
-        </mesh>
+      {/* Bina modeli */}
+      <primitive
+        object={cloned}
+        scale={[0.35, 0.35, 0.35]}
+        castShadow
+        receiveShadow
+      />
+      {/* Departman renk ışığı */}
+      <pointLight
+        ref={glowRef}
+        color={color}
+        intensity={isActive ? 1.5 : 0.2}
+        distance={4}
+        position={[0, 2, 0]}
+      />
+      {/* Aktif olduğunda kıvılcımlar */}
+      {isActive && (
+        <Sparkles
+          count={20}
+          scale={2}
+          size={1.5}
+          speed={0.4}
+          color={color}
+          position={[0, 1.5, 0]}
+        />
       )}
+      {/* Departman etiketi */}
+      <Billboard position={[0, 3.2, 0]}>
+        <Text
+          fontSize={0.28}
+          color={color}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.02}
+          outlineColor="#000000"
+        >
+          {DEPT_LABELS[dept]}
+        </Text>
+        <Text
+          fontSize={0.18}
+          color="#888888"
+          anchorX="center"
+          anchorY="middle"
+          position={[0, -0.35, 0]}
+        >
+          {activeCount}/{agentCount} aktif
+        </Text>
+      </Billboard>
+      {/* Zemin halkası */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+        <ringGeometry args={[0.9, 1.1, 32]} />
+        <meshBasicMaterial color={color} transparent opacity={isActive ? 0.6 : 0.15} />
+      </mesh>
+    </group>
+  );
+}
 
-      {/* Hover / çalışma etiketi */}
-      {(hovered || isSelected) && (
-        <Billboard position={[0, 0.9, 0]}>
+// ─── Agent Maskotu ────────────────────────────────────────────────────────────
+
+interface MascotProps {
+  dept: string;
+  index: number;
+  totalInDept: number;
+  isWorking: boolean;
+  agentName: string;
+  targetDept?: string;
+}
+
+function AgentMascot3D({ dept, index, totalInDept, isWorking, agentName, targetDept }: MascotProps) {
+  const modelPath = AGENT_MODEL_MAP[dept] || AGENT_MODEL_MAP["trade"];
+  const { scene } = useGLTF(modelPath);
+  const cloned = useMemo(() => scene.clone(), [scene]);
+  const groupRef = useRef<THREE.Group>(null);
+  const [moving, setMoving] = useState(false);
+  const moveProgress = useRef(0);
+  const basePos = useRef<[number, number, number]>([0, 0, 0]);
+  const targetPos = useRef<[number, number, number]>([0, 0, 0]);
+
+  // Departman içindeki pozisyon
+  const deptPos = DEPT_POSITIONS[dept] || [0, 0, 0];
+  const angle = (index / Math.max(totalInDept, 1)) * Math.PI * 2;
+  const radius = 1.2;
+  const offsetX = Math.cos(angle) * radius;
+  const offsetZ = Math.sin(angle) * radius;
+  const startPos: [number, number, number] = [
+    deptPos[0] + offsetX,
+    0,
+    deptPos[2] + offsetZ,
+  ];
+
+  useEffect(() => {
+    basePos.current = startPos;
+    if (groupRef.current) {
+      groupRef.current.position.set(...startPos);
+    }
+  }, []);
+
+  // Hedef departmana hareket
+  useEffect(() => {
+    if (targetDept && DEPT_POSITIONS[targetDept]) {
+      const tp = DEPT_POSITIONS[targetDept];
+      targetPos.current = [tp[0], 0, tp[2]];
+      moveProgress.current = 0;
+      setMoving(true);
+    }
+  }, [targetDept]);
+
+  useFrame((state, delta) => {
+    if (!groupRef.current) return;
+
+    if (moving) {
+      moveProgress.current = Math.min(1, moveProgress.current + delta * 0.8);
+      const t = moveProgress.current;
+      // Bezier yay hareketi
+      const midY = 1.5;
+      const x = THREE.MathUtils.lerp(basePos.current[0], targetPos.current[0], t);
+      const y = Math.sin(t * Math.PI) * midY;
+      const z = THREE.MathUtils.lerp(basePos.current[2], targetPos.current[2], t);
+      groupRef.current.position.set(x, y, z);
+      // Hareket yönüne bak
+      const dx = targetPos.current[0] - basePos.current[0];
+      const dz = targetPos.current[2] - basePos.current[2];
+      if (Math.abs(dx) + Math.abs(dz) > 0.1) {
+        groupRef.current.rotation.y = Math.atan2(dx, dz);
+      }
+      if (moveProgress.current >= 1) {
+        setMoving(false);
+        basePos.current = [...targetPos.current];
+      }
+    } else {
+      // Çalışırken zıplama animasyonu
+      if (isWorking) {
+        groupRef.current.position.y = Math.abs(Math.sin(state.clock.elapsedTime * 3 + index)) * 0.15;
+      } else {
+        groupRef.current.position.y = 0;
+      }
+      // Yavaşça kendi etrafında dön
+      groupRef.current.rotation.y += delta * 0.3;
+    }
+  });
+
+  return (
+    <group ref={groupRef}>
+      <primitive
+        object={cloned}
+        scale={[0.18, 0.18, 0.18]}
+        castShadow
+      />
+      {/* Agent adı */}
+      {isWorking && (
+        <Billboard position={[0, 0.8, 0]}>
           <Text
-            fontSize={0.13}
-            color={color}
+            fontSize={0.12}
+            color={DEPT_COLORS[dept] || "#ffffff"}
             anchorX="center"
             anchorY="middle"
             outlineWidth={0.015}
             outlineColor="#000000"
           >
-            {agentName.split("_").slice(0, 2).join(" ")}
+            {agentName.split("_")[0]}
           </Text>
-          {isWorking && (
-            <Text
-              fontSize={0.1}
-              color="#88ff88"
-              anchorX="center"
-              anchorY="middle"
-              position={[0, -0.18, 0]}
-            >
-              ● çalışıyor
-            </Text>
-          )}
         </Billboard>
-      )}
-
-      {/* Çalışırken küçük ışık */}
-      {isWorking && (
-        <pointLight color={color} intensity={0.6} distance={1.5} position={[0, 0.5, 0]} />
       )}
     </group>
   );
 }
 
-// ─── Mesaj Işını ──────────────────────────────────────────────────────────────
+// ─── Mesaj Parçacığı ──────────────────────────────────────────────────────────
 
 interface MessageBeamProps {
   from: string;
@@ -455,10 +321,10 @@ function MessageBeam({ from, to, color, onComplete }: MessageBeamProps) {
 
   useFrame((_, delta) => {
     if (!meshRef.current || completed.current) return;
-    progress.current = Math.min(1, progress.current + delta * 1.4);
+    progress.current = Math.min(1, progress.current + delta * 1.2);
     const t = progress.current;
     const x = THREE.MathUtils.lerp(fromPos[0], toPos[0], t);
-    const y = Math.sin(t * Math.PI) * 3.5;
+    const y = Math.sin(t * Math.PI) * 2.5;
     const z = THREE.MathUtils.lerp(fromPos[2], toPos[2], t);
     meshRef.current.position.set(x, y, z);
     if (progress.current >= 1 && !completed.current) {
@@ -468,106 +334,17 @@ function MessageBeam({ from, to, color, onComplete }: MessageBeamProps) {
   });
 
   return (
-    <mesh ref={meshRef} position={[fromPos[0], 0.5, fromPos[2]]}>
-      <sphereGeometry args={[0.14, 8, 8]} />
-      <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.5} toneMapped={false} />
-      <pointLight color={color} intensity={4} distance={2.5} />
+    <mesh ref={meshRef} position={[fromPos[0], 0, fromPos[2]]}>
+      <sphereGeometry args={[0.12, 8, 8]} />
+      <meshStandardMaterial
+        color={color}
+        emissive={color}
+        emissiveIntensity={2}
+        toneMapped={false}
+      />
+      {/* Işık izi */}
+      <pointLight color={color} intensity={3} distance={2} />
     </mesh>
-  );
-}
-
-// ─── 3. Şahıs Kamera Kontrolcüsü ─────────────────────────────────────────────
-
-interface ThirdPersonCameraProps {
-  target: THREE.Vector3 | null;
-  onExit: () => void;
-}
-
-function ThirdPersonCamera({ target, onExit }: ThirdPersonCameraProps) {
-  const { camera } = useThree();
-  const smoothPos = useRef(new THREE.Vector3());
-  const smoothLook = useRef(new THREE.Vector3());
-  const isActive = !!target;
-
-  useFrame((state, delta) => {
-    if (!target) return;
-
-    // Kamera hedef pozisyonu: agentin 3 birim arkası, 2.5 birim yukarısı
-    const desiredPos = new THREE.Vector3(
-      target.x,
-      target.y + 2.5,
-      target.z + 3.5
-    );
-
-    // Bakış noktası: agentin 1 birim yukarısı
-    const lookAt = new THREE.Vector3(target.x, target.y + 1.0, target.z);
-
-    // Smooth interpolation
-    smoothPos.current.lerp(desiredPos, delta * 4);
-    smoothLook.current.lerp(lookAt, delta * 5);
-
-    camera.position.copy(smoothPos.current);
-    camera.lookAt(smoothLook.current);
-  });
-
-  return null;
-}
-
-// ─── Kamera Modu UI ───────────────────────────────────────────────────────────
-
-interface CameraHUDProps {
-  selectedAgent: AgentRef | null;
-  onExit: () => void;
-}
-
-function CameraHUD({ selectedAgent, onExit }: CameraHUDProps) {
-  if (!selectedAgent) return null;
-  const color = DEPT_COLORS[selectedAgent.dept] || "#ffffff";
-  return (
-    <Html fullscreen>
-      <div
-        style={{
-          position: "absolute",
-          bottom: 24,
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: "rgba(0,0,0,0.75)",
-          border: `1px solid ${color}`,
-          borderRadius: 10,
-          padding: "10px 22px",
-          display: "flex",
-          alignItems: "center",
-          gap: 16,
-          fontFamily: "monospace",
-          color: "#fff",
-          fontSize: 13,
-          backdropFilter: "blur(6px)",
-          zIndex: 100,
-          pointerEvents: "all",
-        }}
-      >
-        <span style={{ color }}>●</span>
-        <span>
-          <b style={{ color }}>{selectedAgent.agentId.split("_").slice(0, 2).join(" ")}</b>
-          {" — "}
-          <span style={{ color: "#aaa" }}>{DEPT_LABELS[selectedAgent.dept]}</span>
-        </span>
-        <button
-          onClick={onExit}
-          style={{
-            background: "rgba(255,255,255,0.1)",
-            border: "1px solid #444",
-            borderRadius: 6,
-            color: "#fff",
-            padding: "3px 12px",
-            cursor: "pointer",
-            fontSize: 12,
-          }}
-        >
-          ✕ Çık
-        </button>
-      </div>
-    </Html>
   );
 }
 
@@ -576,9 +353,6 @@ function CameraHUD({ selectedAgent, onExit }: CameraHUDProps) {
 interface SceneProps {
   events: WorldEvent[];
   worldModels: AgentWorldModel[];
-  selectedAgent: AgentRef | null;
-  onSelectAgent: (ref: AgentRef) => void;
-  onExitFollow: () => void;
 }
 
 interface ActiveBeam {
@@ -588,31 +362,25 @@ interface ActiveBeam {
   color: string;
 }
 
-function Scene({ events, worldModels, selectedAgent, onSelectAgent, onExitFollow }: SceneProps) {
+function Scene({ events, worldModels }: SceneProps) {
   const [activeBeams, setActiveBeams] = useState<ActiveBeam[]>([]);
   const lastEventCount = useRef(0);
-  const agentRefs = useRef<Map<string, { dept: string; pos: THREE.Vector3 }>>(new Map());
 
-  const registerRef = useCallback((id: string, dept: string, pos: THREE.Vector3) => {
-    agentRefs.current.set(id, { dept, pos });
-  }, []);
-
-  // Yeni event'leri izle
+  // Yeni event'leri izle ve beam oluştur
   useEffect(() => {
     if (events.length <= lastEventCount.current) return;
     const newEvents = events.slice(lastEventCount.current);
     lastEventCount.current = events.length;
+
     for (const ev of newEvents) {
       if (ev.type === "agent_message" && ev.from_dept && ev.to_dept && ev.from_dept !== ev.to_dept) {
-        setActiveBeams((prev) => [
-          ...prev.slice(-8),
-          {
-            id: `${Date.now()}-${Math.random()}`,
-            from: ev.from_dept!,
-            to: ev.to_dept!,
-            color: DEPT_COLORS[ev.from_dept!] || "#ffffff",
-          },
-        ]);
+        const beam: ActiveBeam = {
+          id: `${Date.now()}-${Math.random()}`,
+          from: ev.from_dept,
+          to: ev.to_dept,
+          color: DEPT_COLORS[ev.from_dept] || "#ffffff",
+        };
+        setActiveBeams((prev) => [...prev.slice(-10), beam]);
       }
     }
   }, [events]);
@@ -633,6 +401,7 @@ function Scene({ events, worldModels, selectedAgent, onSelectAgent, onExitFollow
     return stats;
   }, [worldModels]);
 
+  // Agent listesi
   const agentsByDept = useMemo(() => {
     const map: Record<string, AgentWorldModel[]> = {};
     for (const dept of Object.keys(DEPT_POSITIONS)) {
@@ -640,93 +409,60 @@ function Scene({ events, worldModels, selectedAgent, onSelectAgent, onExitFollow
         const id = m.agent_id.toLowerCase();
         return id.includes(dept) || (dept === "bots" && id.includes("bot"));
       });
-      // Veri yoksa placeholder göster
-      if (map[dept].length === 0) {
-        map[dept] = Array.from({ length: 3 }, (_, i) => ({
-          agent_id: `${dept}_agent_${i + 1}`,
-          current_task: i === 0 ? "idle" : null,
-          energy_level: 80,
-          expertise_score: 0.7,
-          trust_network: {},
-          idle_timeout_seconds: 30,
-        } as AgentWorldModel));
-      }
     }
     return map;
   }, [worldModels]);
 
   return (
     <>
-      {/* ── Işıklar ── */}
-      <ambientLight intensity={0.35} />
+      {/* Işıklar */}
+      <ambientLight intensity={0.4} />
       <directionalLight
-        position={[12, 18, 12]}
-        intensity={1.1}
+        position={[10, 15, 10]}
+        intensity={1.2}
         castShadow
         shadow-mapSize={[2048, 2048]}
-        shadow-camera-far={60}
-        shadow-camera-left={-30}
-        shadow-camera-right={30}
-        shadow-camera-top={30}
-        shadow-camera-bottom={-30}
       />
-      <directionalLight position={[-12, 10, -12]} intensity={0.25} color="#4466ff" />
-      <hemisphereLight args={["#0a1030", "#050810", 0.5]} />
+      <directionalLight position={[-10, 10, -10]} intensity={0.3} color="#4488ff" />
 
-      {/* ── Zemin + Yollar ── */}
+      {/* Zemin */}
       <Ground />
-      <Roads />
+      <GridLines />
 
-      {/* ── Departman binaları + masalar ── */}
-      {Object.entries(DEPT_POSITIONS).map(([dept, pos]) => {
-        const stats = deptStats[dept] || { total: 3, active: 0 };
-        const agentCount = agentsByDept[dept]?.length || stats.total;
-        return (
-          <group key={dept}>
-            <GlassBuilding
-              dept={dept}
-              position={pos}
-              isActive={stats.active > 0}
-              agentCount={agentCount}
-              activeCount={stats.active}
-              onClick={() => {
-                // Binaya tıklayınca genel kameraya dön
-                onExitFollow();
-              }}
-            />
-            {/* Bina içindeki masalar */}
-            {Array.from({ length: Math.min(agentCount, DESK_OFFSETS.length) }).map((_, i) => {
-              const off = DESK_OFFSETS[i];
-              return (
-                <Desk
-                  key={i}
-                  position={[pos[0] + off[0], 0, pos[2] + off[2]]}
-                  color={DEPT_COLORS[dept] || "#ffffff"}
-                />
-              );
-            })}
-          </group>
-        );
-      })}
+      {/* Çevre */}
+      <Suspense fallback={null}>
+        <SiliconValleyEnv />
+      </Suspense>
 
-      {/* ── Agent maskotları (bina içinde) ── */}
+      {/* Departman binaları */}
+      {Object.entries(DEPT_POSITIONS).map(([dept, pos]) => (
+        <Suspense key={dept} fallback={null}>
+          <DeptBuilding
+            dept={dept}
+            position={pos}
+            isActive={(deptStats[dept]?.active || 0) > 0}
+            agentCount={deptStats[dept]?.total || 3}
+            activeCount={deptStats[dept]?.active || 0}
+          />
+        </Suspense>
+      ))}
+
+      {/* Agent maskotları */}
       {Object.entries(agentsByDept).map(([dept, agents]) =>
         agents.map((agent, idx) => (
           <Suspense key={agent.agent_id} fallback={null}>
             <AgentMascot3D
               dept={dept}
               index={idx}
+              totalInDept={agents.length}
               isWorking={!!agent.current_task}
               agentName={agent.agent_id}
-              isSelected={selectedAgent?.agentId === agent.agent_id}
-              onSelect={onSelectAgent}
-              registerRef={registerRef}
             />
           </Suspense>
         ))
       )}
 
-      {/* ── Mesaj ışınları ── */}
+      {/* Mesaj ışınları */}
       {activeBeams.map((beam) => (
         <MessageBeam
           key={beam.id}
@@ -739,31 +475,24 @@ function Scene({ events, worldModels, selectedAgent, onSelectAgent, onExitFollow
         />
       ))}
 
-      {/* ── 3. Şahıs Kamera ── */}
-      {selectedAgent ? (
-        <>
-          <ThirdPersonCamera target={selectedAgent.worldPos} onExit={onExitFollow} />
-          <CameraHUD selectedAgent={selectedAgent} onExit={onExitFollow} />
-        </>
-      ) : (
-        <OrbitControls
-          enablePan={true}
-          enableZoom={true}
-          enableRotate={true}
-          minDistance={4}
-          maxDistance={45}
-          maxPolarAngle={Math.PI / 2 - 0.02}
-          target={[0, 1, 0]}
-        />
-      )}
+      {/* Kamera kontrolü */}
+      <OrbitControls
+        enablePan={true}
+        enableZoom={true}
+        enableRotate={true}
+        minDistance={5}
+        maxDistance={30}
+        maxPolarAngle={Math.PI / 2.2}
+        target={[0, 0, 0]}
+      />
 
-      {/* ── Çevre ── */}
+      {/* Çevre ışığı */}
       <Environment preset="night" />
     </>
   );
 }
 
-// ─── Yükleme ──────────────────────────────────────────────────────────────────
+// ─── Yükleme Göstergesi ───────────────────────────────────────────────────────
 
 function LoadingFallback() {
   return (
@@ -784,64 +513,27 @@ interface World3DSceneProps {
 }
 
 export default function World3DScene({ events, worldModels }: World3DSceneProps) {
-  const [selectedAgent, setSelectedAgent] = useState<AgentRef | null>(null);
-
-  const handleSelectAgent = useCallback((ref: AgentRef) => {
-    setSelectedAgent(ref);
-  }, []);
-
-  const handleExitFollow = useCallback(() => {
-    setSelectedAgent(null);
-  }, []);
-
   return (
-    <div className="w-full h-full relative" style={{ background: "#050810" }}>
-      {/* Kamera modu göstergesi */}
-      {!selectedAgent && (
-        <div
-          style={{
-            position: "absolute",
-            top: 12,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "rgba(0,0,0,0.6)",
-            border: "1px solid #1a2a4a",
-            borderRadius: 8,
-            padding: "5px 16px",
-            fontFamily: "monospace",
-            fontSize: 11,
-            color: "#556688",
-            zIndex: 10,
-            pointerEvents: "none",
-          }}
-        >
-          Bir agent'a tıklayarak 3. şahıs kamerasına geç
-        </div>
-      )}
-
+    <div className="w-full h-full" style={{ background: "#050810" }}>
       <Canvas
         shadows
-        camera={{ position: [0, 18, 22], fov: 48 }}
+        camera={{ position: [0, 12, 16], fov: 50 }}
         gl={{ antialias: true, alpha: false }}
         style={{ background: "#050810" }}
       >
         <Suspense fallback={<LoadingFallback />}>
-          <Scene
-            events={events}
-            worldModels={worldModels}
-            selectedAgent={selectedAgent}
-            onSelectAgent={handleSelectAgent}
-            onExitFollow={handleExitFollow}
-          />
+          <Scene events={events} worldModels={worldModels} />
         </Suspense>
       </Canvas>
     </div>
   );
 }
 
-// Preload
+// Preload modeller
 useGLTF.preload("/models/trade_agent.glb");
 useGLTF.preload("/models/medical_agent.glb");
 useGLTF.preload("/models/hotel_agent.glb");
 useGLTF.preload("/models/software_agent.glb");
 useGLTF.preload("/models/bots_agent.glb");
+useGLTF.preload("/models/office_building.glb");
+useGLTF.preload("/models/silicon_valley_env.glb");
