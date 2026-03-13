@@ -22,3 +22,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 CMD alembic upgrade head 2>/dev/null; python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8888}
 
 # Cache bust: 20260313-rootdir-backend
+
+# Force rebuild: 20260313-105353
