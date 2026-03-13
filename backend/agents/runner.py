@@ -230,6 +230,7 @@ KURALLAR:
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
+                            "tool_name": block.name,  # Gemini için gerekli; Anthropic provider filtreler
                             "content": result_str,
                         })
                         assistant_content.append({

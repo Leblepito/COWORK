@@ -70,11 +70,27 @@ class AnthropicProvider:
         self.model = model or "claude-3-haiku-20240307"
 
     def get_response(self, system_prompt: str, messages: list, tools: list) -> LLMResponse:
+        # Anthropic API tool_result içinde 'tool_name' alanını kabul etmez
+        # (Gemini için runner.py'de saklanır, buraya gelince filtrelenir)
+        def _clean_messages(msgs: list) -> list:
+            cleaned = []
+            for m in msgs:
+                if isinstance(m.get("content"), list):
+                    new_content = []
+                    for item in m["content"]:
+                        if isinstance(item, dict) and item.get("type") == "tool_result":
+                            item = {k: v for k, v in item.items() if k != "tool_name"}
+                        new_content.append(item)
+                    cleaned.append({**m, "content": new_content})
+                else:
+                    cleaned.append(m)
+            return cleaned
+
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": 4096,
             "system": system_prompt,
-            "messages": messages,
+            "messages": _clean_messages(messages),
         }
         if tools:
             # Convert to Anthropic tool format
