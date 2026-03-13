@@ -7,6 +7,48 @@ from ..agents.runner import spawn_agent, kill_agent, get_statuses, get_output
 
 router = APIRouter(prefix="/api", tags=["agents"])
 
+# CEO durum ve tetikleme endpoint'leri
+_ceo_run_count = 0
+_ceo_last_run: str | None = None
+
+
+@router.get("/agents/ceo/status")
+async def ceo_status():
+    """CEO agent'in aktif/pasif durumunu döndür."""
+    from ..agents.runner import get_statuses as _gs
+    all_statuses = await _gs()
+    ceo_st = all_statuses.get("ceo", {})
+    is_active = ceo_st.get("status", "idle") in ("working", "thinking", "running")
+    return {
+        "agent_id": "ceo",
+        "current_task": ceo_st.get("task"),
+        "is_active": is_active,
+        "tick_count": _ceo_run_count,
+        "last_run": _ceo_last_run,
+        "status": ceo_st.get("status", "idle"),
+    }
+
+
+@router.post("/agents/ceo/trigger")
+async def trigger_ceo():
+    """CEO agent'i manuel olarak tetikle."""
+    global _ceo_run_count, _ceo_last_run
+    from datetime import datetime, timezone
+    from ..database import get_db as _get_db
+    try:
+        from ..agents.autonomous import autonomous_loop
+        db = _get_db()
+        await autonomous_loop.trigger_ceo_agent(db)
+        _ceo_run_count += 1
+        _ceo_last_run = datetime.now(timezone.utc).isoformat()
+        return {"status": "triggered", "tick_count": _ceo_run_count}
+    except Exception as e:
+        # Fallback: doğrudan spawn
+        result = await spawn_agent("ceo", "Sistem durumunu analiz et ve gerekli görevleri oluştur")
+        _ceo_run_count += 1
+        _ceo_last_run = datetime.now(timezone.utc).isoformat()
+        return {"status": "spawned", "result": result, "tick_count": _ceo_run_count, "error": str(e)}
+
 
 @router.get("/agents")
 async def list_agents(department_id: str | None = None):

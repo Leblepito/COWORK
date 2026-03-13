@@ -1,13 +1,12 @@
 "use client";
 /**
- * COWORK.ARMY — World3DScene v3
+ * COWORK.ARMY — World3DScene v5
  *
  * Düzeltmeler:
- * 1. Bina: office_building.glb (Meshy.ai) — traverse ile tüm mesh'lere
- *    şeffaflık uygulandı, raycast devre dışı → agent tıklamaları geçer
- * 2. Agent tıklama: görünmez ama büyük hitbox (sphere) + primitive üstünde
- *    onClick — cam duvarlar artık tıklamayı engellemiyor
- * 3. 3. şahıs kamera: seçili agentin arkasına smooth geçiş
+ * 1. Kamera HUD Canvas DIŞINA taşındı → çıkış butonu her zaman çalışır
+ * 2. Her departman için prosedürel ofis iç mekanı (zemin, duvarlar, tavan, ekipman)
+ * 3. Agent müdahale paneli: seçili agent'a görev gönder, durdur
+ * 4. CEO kule + Cargo drone korundu
  */
 import {
   Suspense,
@@ -21,7 +20,6 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import {
   useGLTF,
   OrbitControls,
-  Environment,
   Html,
   Billboard,
   Text,
@@ -32,17 +30,16 @@ import type { WorldEvent, AgentWorldModel } from "@/lib/world-types";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
-// CEO merkezi konumu (tüm departmanların ortasında)
 const CEO_POSITION: [number, number, number] = [0, 0, 0];
 const CARGO_COLOR = "#f472b6";
 const CEO_COLOR = "#ffd700";
 
 const DEPT_POSITIONS: Record<string, [number, number, number]> = {
-  trade:    [-9,  0,  -6],
-  medical:  [ 0,  0,  -9],
-  hotel:    [ 9,  0,  -6],
-  software: [-6,  0,   6],
-  bots:     [ 6,  0,   6],
+  trade:    [-10, 0, -7],
+  medical:  [  0, 0, -11],
+  hotel:    [ 10, 0, -7],
+  software: [ -7, 0,  7],
+  bots:     [  7, 0,  7],
 };
 
 const DEPT_COLORS: Record<string, string> = {
@@ -64,172 +61,48 @@ const DEPT_LABELS: Record<string, string> = {
 };
 
 const AGENT_MODEL_MAP: Record<string, string> = {
-  management: "/models/trade_agent.glb", // CEO için trade_agent modeli kullanılıyor (placeholder)
-  trade:    "/models/trade_agent.glb",
-  medical:  "/models/medical_agent.glb",
-  hotel:    "/models/hotel_agent.glb",
-  software: "/models/software_agent.glb",
-  bots:     "/models/bots_agent.glb",
+  management: "/models/trade_agent.glb",
+  trade:      "/models/trade_agent.glb",
+  medical:    "/models/medical_agent.glb",
+  hotel:      "/models/hotel_agent.glb",
+  software:   "/models/software_agent.glb",
+  bots:       "/models/bots_agent.glb",
 };
 
-/** Bina içindeki masa grid'i — bina merkezi etrafında */
+// Masa grid'i — bina merkezine göre
 const DESK_OFFSETS: [number, number, number][] = [
-  [-1.3, 0, -1.3],
-  [ 0.0, 0, -1.3],
-  [ 1.3, 0, -1.3],
-  [-1.3, 0,  0.2],
+  [-1.4, 0, -1.4],
+  [ 0.0, 0, -1.4],
+  [ 1.4, 0, -1.4],
+  [-1.4, 0,  0.2],
   [ 0.0, 0,  0.2],
-  [ 1.3, 0,  0.2],
-  [ 0.0, 0,  1.4],
+  [ 1.4, 0,  0.2],
+  [ 0.0, 0,  1.5],
 ];
 
-// ─── CEO Binası (Merkezi Kule) ──────────────────────────────────────────────
-
-function CEOBuilding({ isActive }: { isActive: boolean }) {
-  const glowRef = useRef<THREE.PointLight>(null);
-
-  useFrame((state) => {
-    if (glowRef.current) {
-      glowRef.current.intensity = isActive
-        ? 2.5 + Math.sin(state.clock.elapsedTime * 1.8) * 0.8
-        : 0.5;
-    }
-  });
-
-  return (
-    <group position={CEO_POSITION}>
-      {/* Ana kule gövdesi */}
-      <mesh position={[0, 2.5, 0]} castShadow>
-        <cylinderGeometry args={[1.0, 1.3, 5.0, 8]} />
-        <meshStandardMaterial
-          color="#1a1a2e"
-          emissive={CEO_COLOR}
-          emissiveIntensity={isActive ? 0.15 : 0.05}
-          metalness={0.8}
-          roughness={0.2}
-        />
-      </mesh>
-      {/* Üst platform */}
-      <mesh position={[0, 5.2, 0]} castShadow>
-        <cylinderGeometry args={[1.5, 1.0, 0.3, 8]} />
-        <meshStandardMaterial color={CEO_COLOR} emissive={CEO_COLOR} emissiveIntensity={0.6} metalness={0.9} roughness={0.1} />
-      </mesh>
-      {/* Dönen halka */}
-      <mesh position={[0, 3.5, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[1.8, 0.06, 8, 32]} />
-        <meshStandardMaterial color={CEO_COLOR} emissive={CEO_COLOR} emissiveIntensity={isActive ? 1.5 : 0.3} toneMapped={false} />
-      </mesh>
-      {/* Kule ışığı */}
-      <pointLight ref={glowRef} color={CEO_COLOR} intensity={isActive ? 2.5 : 0.5} distance={12} position={[0, 5.5, 0]} />
-      {/* Kıvılcım */}
-      {isActive && (
-        <Sparkles count={30} scale={[3, 3, 3]} size={1.8} speed={0.5} color={CEO_COLOR} position={[0, 5.5, 0]} />
-      )}
-      {/* Etiket */}
-      <Billboard position={[0, 7.0, 0]}>
-        <Text fontSize={0.4} color={CEO_COLOR} anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#000">
-          👑 CEO
-        </Text>
-        <Text fontSize={0.2} color="#aaaaaa" anchorX="center" anchorY="middle" position={[0, -0.55, 0]}>
-          {isActive ? "● Analiz ediyor" : "○ Bekliyor"}
-        </Text>
-      </Billboard>
-      {/* Zemin halkası */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]}>
-        <ringGeometry args={[2.0, 2.5, 48]} />
-        <meshBasicMaterial color={CEO_COLOR} transparent opacity={isActive ? 0.6 : 0.15} />
-      </mesh>
-    </group>
-  );
-}
-
-// ─── Cargo Drone (Departmanlar arası uçan teslimat) ───────────────────────────
-
-interface CargoBeamProps {
-  from: [number, number, number];
-  to: [number, number, number];
-  taskTitle: string;
-  onComplete: () => void;
-}
-
-function CargoDrone({ from, to, taskTitle, onComplete }: CargoBeamProps) {
-  const groupRef = useRef<THREE.Group>(null);
-  const t = useRef(0);
-  const done = useRef(false);
-
-  useFrame((_, delta) => {
-    if (!groupRef.current || done.current) return;
-    t.current = Math.min(1, t.current + delta * 0.7);
-    const v = t.current;
-    const arc = Math.sin(v * Math.PI) * 5;
-    groupRef.current.position.set(
-      THREE.MathUtils.lerp(from[0], to[0], v),
-      arc + 1.5,
-      THREE.MathUtils.lerp(from[2], to[2], v)
-    );
-    // Drone yönünü hareket yönüne döndür
-    const angle = Math.atan2(to[0] - from[0], to[2] - from[2]);
-    groupRef.current.rotation.y = angle;
-    if (t.current >= 1) { done.current = true; onComplete(); }
-  });
-
-  return (
-    <group ref={groupRef} position={[from[0], 1.5, from[2]]}>
-      {/* Drone gövdesi */}
-      <mesh>
-        <boxGeometry args={[0.3, 0.1, 0.3]} />
-        <meshStandardMaterial color={CARGO_COLOR} emissive={CARGO_COLOR} emissiveIntensity={0.8} metalness={0.7} />
-      </mesh>
-      {/* Pervane kolları */}
-      {([[-0.25, 0, -0.25], [0.25, 0, -0.25], [-0.25, 0, 0.25], [0.25, 0, 0.25]] as [number,number,number][]).map(([ax, ay, az], i) => (
-        <group key={i} position={[ax, ay, az]}>
-          <mesh>
-            <cylinderGeometry args={[0.12, 0.12, 0.02, 6]} />
-            <meshStandardMaterial color="#333" />
-          </mesh>
-          <pointLight color={CARGO_COLOR} intensity={0.5} distance={1} />
-        </group>
-      ))}
-      {/* Kargo kutusu */}
-      <mesh position={[0, -0.18, 0]}>
-        <boxGeometry args={[0.18, 0.15, 0.18]} />
-        <meshStandardMaterial color="#ffd700" emissive="#ffd700" emissiveIntensity={0.3} />
-      </mesh>
-      {/* Işık */}
-      <pointLight color={CARGO_COLOR} intensity={2} distance={3} />
-      {/* Görev etiketi */}
-      <Billboard position={[0, 0.6, 0]}>
-        <Text fontSize={0.12} color={CARGO_COLOR} anchorX="center" anchorY="middle" outlineWidth={0.015} outlineColor="#000">
-          📦 {taskTitle.slice(0, 20)}
-        </Text>
-      </Billboard>
-    </group>
-  );
-}
+// Bina boyutları
+const BLDG_W = 5.5;
+const BLDG_D = 5.5;
+const BLDG_H = 3.2;
+const WALL_T = 0.08;
 
 // ─── Zemin ───────────────────────────────────────────────────────────────────
 
 function Ground() {
   return (
     <>
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        receiveShadow
-        position={[0, -0.02, 0]}
-        // Zemin tıklamayı geçirsin (agent'lar için)
-        onPointerDown={() => {}}
-      >
-        <planeGeometry args={[80, 80]} />
-        <meshStandardMaterial color="#080c18" roughness={0.95} metalness={0.05} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.02, 0]}>
+        <planeGeometry args={[100, 100]} />
+        <meshStandardMaterial color="#060a14" roughness={0.95} metalness={0.05} />
       </mesh>
-      <gridHelper args={[80, 80, "#141c3a", "#0d1228"]} position={[0, 0, 0]} />
+      <gridHelper args={[100, 100, "#0e1428", "#0a1020"]} position={[0, 0, 0]} />
     </>
   );
 }
 
-// ─── Ofis Binası (GLB + şeffaf traverse) ─────────────────────────────────────
+// ─── Ofis İç Mekanı ──────────────────────────────────────────────────────────
 
-interface BuildingProps {
+interface OfficeInteriorProps {
   dept: string;
   position: [number, number, number];
   isActive: boolean;
@@ -237,104 +110,303 @@ interface BuildingProps {
   activeCount: number;
 }
 
-function DeptBuilding({ dept, position, isActive, agentCount, activeCount }: BuildingProps) {
-  const { scene } = useGLTF("/models/office_building.glb");
+function OfficeInterior({ dept, position, isActive, agentCount, activeCount }: OfficeInteriorProps) {
   const color = DEPT_COLORS[dept] || "#ffffff";
   const glowRef = useRef<THREE.PointLight>(null);
-
-  // GLB'yi klonla ve tüm mesh'lere şeffaflık uygula
-  const transparentScene = useMemo(() => {
-    const clone = scene.clone(true);
-    clone.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        const mesh = child as THREE.Mesh;
-        // Raycast'i devre dışı bırak → agent tıklamaları geçer
-        mesh.raycast = () => {};
-        // Materyali şeffaf yap
-        const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
-        mat.transparent = true;
-        mat.opacity = 0.45;
-        mat.depthWrite = false;
-        mat.color = new THREE.Color(color).lerp(new THREE.Color("#ffffff"), 0.3);
-        mat.emissive = new THREE.Color(color);
-        mat.emissiveIntensity = isActive ? 0.12 : 0.04;
-        mesh.material = mat;
-        mesh.castShadow = false;
-        mesh.receiveShadow = false;
-      }
-    });
-    return clone;
-  }, [scene, color, isActive]);
 
   useFrame((state) => {
     if (glowRef.current) {
       glowRef.current.intensity = isActive
-        ? 1.0 + Math.sin(state.clock.elapsedTime * 2.5) * 0.35
-        : 0.12;
+        ? 1.2 + Math.sin(state.clock.elapsedTime * 2.2) * 0.4
+        : 0.15;
     }
   });
 
+  const W = BLDG_W, D = BLDG_D, H = BLDG_H, T = WALL_T;
+
   return (
     <group position={position}>
-      {/* GLB bina modeli — şeffaf, tıklamayı geçirir */}
-      <primitive
-        object={transparentScene}
-        scale={[0.38, 0.38, 0.38]}
-      />
+      {/* ── Zemin ── */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
+        <planeGeometry args={[W, D]} />
+        <meshStandardMaterial color="#0d1228" roughness={0.7} metalness={0.2} />
+      </mesh>
+      {/* Zemin çizgileri */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
+        <planeGeometry args={[W - 0.1, D - 0.1]} />
+        <meshBasicMaterial color={color} transparent opacity={0.04} />
+      </mesh>
 
-      {/* Departman renk ışığı */}
-      <pointLight
-        ref={glowRef}
-        color={color}
-        intensity={isActive ? 1.0 : 0.12}
-        distance={7}
-        position={[0, 2.5, 0]}
-      />
+      {/* ── Tavan ── */}
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, H, 0]}>
+        <planeGeometry args={[W, D]} />
+        <meshStandardMaterial color="#080c18" roughness={0.9} />
+      </mesh>
 
-      {/* Aktif kıvılcım */}
+      {/* ── Duvarlar (şeffaf cam) ── */}
+      {/* Ön duvar */}
+      <mesh position={[0, H / 2, D / 2]}>
+        <boxGeometry args={[W, H, T]} />
+        <meshPhysicalMaterial color={color} transparent opacity={0.08} roughness={0} metalness={0.1} transmission={0.9} />
+      </mesh>
+      {/* Arka duvar */}
+      <mesh position={[0, H / 2, -D / 2]}>
+        <boxGeometry args={[W, H, T]} />
+        <meshPhysicalMaterial color={color} transparent opacity={0.08} roughness={0} metalness={0.1} transmission={0.9} />
+      </mesh>
+      {/* Sol duvar */}
+      <mesh position={[-W / 2, H / 2, 0]}>
+        <boxGeometry args={[T, H, D]} />
+        <meshPhysicalMaterial color={color} transparent opacity={0.08} roughness={0} metalness={0.1} transmission={0.9} />
+      </mesh>
+      {/* Sağ duvar */}
+      <mesh position={[W / 2, H / 2, 0]}>
+        <boxGeometry args={[T, H, D]} />
+        <meshPhysicalMaterial color={color} transparent opacity={0.08} roughness={0} metalness={0.1} transmission={0.9} />
+      </mesh>
+
+      {/* ── Köşe kolonları ── */}
+      {([[-W/2, W/2, -D/2, D/2]] as never[]).flatMap(() =>
+        ([-W/2, W/2] as number[]).flatMap(cx =>
+          ([-D/2, D/2] as number[]).map(cz => ({ cx, cz }))
+        )
+      ).map(({ cx, cz }, i) => (
+        <mesh key={i} position={[cx, H / 2, cz]} castShadow>
+          <boxGeometry args={[0.18, H, 0.18]} />
+          <meshStandardMaterial color="#0d1228" metalness={0.6} roughness={0.3} emissive={color} emissiveIntensity={0.06} />
+        </mesh>
+      ))}
+
+      {/* ── Tavan ışık şeritleri ── */}
+      {([-1.2, 0, 1.2] as number[]).map((ox, i) => (
+        <mesh key={i} position={[ox, H - 0.05, 0]}>
+          <boxGeometry args={[0.12, 0.04, D - 0.4]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 1.2 : 0.3} toneMapped={false} />
+        </mesh>
+      ))}
+
+      {/* ── Departmana özel ekipman ── */}
+      <DeptEquipment dept={dept} color={color} isActive={isActive} />
+
+      {/* ── İç ışık ── */}
+      <pointLight ref={glowRef} color={color} intensity={isActive ? 1.2 : 0.15} distance={8} position={[0, H - 0.5, 0]} />
+
+      {/* ── Aktif kıvılcım ── */}
       {isActive && (
-        <Sparkles
-          count={18}
-          scale={[3.5, 1.2, 3.5]}
-          size={1.4}
-          speed={0.35}
-          color={color}
-          position={[0, 4.2, 0]}
-        />
+        <Sparkles count={12} scale={[W - 1, 0.5, D - 1]} size={1.0} speed={0.3} color={color} position={[0, H + 0.2, 0]} />
       )}
 
-      {/* Departman etiketi */}
-      <Billboard position={[0, 5.2, 0]}>
-        <Text
-          fontSize={0.34}
-          color={color}
-          anchorX="center"
-          anchorY="middle"
-          outlineWidth={0.025}
-          outlineColor="#000000"
-        >
+      {/* ── Departman etiketi ── */}
+      <Billboard position={[0, H + 1.0, 0]}>
+        <Text fontSize={0.32} color={color} anchorX="center" anchorY="middle" outlineWidth={0.025} outlineColor="#000">
           {DEPT_LABELS[dept]}
         </Text>
-        <Text
-          fontSize={0.2}
-          color="#888888"
-          anchorX="center"
-          anchorY="middle"
-          position={[0, -0.46, 0]}
-        >
+        <Text fontSize={0.18} color="#888888" anchorX="center" anchorY="middle" position={[0, -0.44, 0]}>
           {activeCount}/{agentCount} aktif
         </Text>
       </Billboard>
 
-      {/* Zemin halkası */}
+      {/* ── Zemin halkası ── */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]}>
-        <ringGeometry args={[2.6, 3.0, 48]} />
-        <meshBasicMaterial
-          color={color}
-          transparent
-          opacity={isActive ? 0.55 : 0.12}
-        />
+        <ringGeometry args={[W / 2 + 0.3, W / 2 + 0.7, 48]} />
+        <meshBasicMaterial color={color} transparent opacity={isActive ? 0.5 : 0.1} />
       </mesh>
+    </group>
+  );
+}
+
+// ─── Departmana Özel Ekipman ──────────────────────────────────────────────────
+
+function DeptEquipment({ dept, color, isActive }: { dept: string; color: string; isActive: boolean }) {
+  switch (dept) {
+    case "trade":
+      return <TradeEquipment color={color} isActive={isActive} />;
+    case "medical":
+      return <MedicalEquipment color={color} isActive={isActive} />;
+    case "hotel":
+      return <HotelEquipment color={color} isActive={isActive} />;
+    case "software":
+      return <SoftwareEquipment color={color} isActive={isActive} />;
+    case "bots":
+      return <BotsEquipment color={color} isActive={isActive} />;
+    default:
+      return null;
+  }
+}
+
+// Trade: büyük trading ekranı duvarı
+function TradeEquipment({ color, isActive }: { color: string; isActive: boolean }) {
+  return (
+    <group>
+      {/* Büyük ekran duvarı */}
+      <mesh position={[0, 1.6, -BLDG_D / 2 + 0.15]}>
+        <boxGeometry args={[4.2, 2.0, 0.08]} />
+        <meshStandardMaterial color="#050810" emissive={color} emissiveIntensity={isActive ? 0.25 : 0.05} />
+      </mesh>
+      {/* Ekran içi grafik çizgileri */}
+      {([0.6, 1.0, 0.4, 0.8, 1.2, 0.5] as number[]).map((h, i) => (
+        <mesh key={i} position={[-1.8 + i * 0.7, 1.2 + h * 0.5, -BLDG_D / 2 + 0.2]}>
+          <boxGeometry args={[0.08, h, 0.02]} />
+          <meshBasicMaterial color={color} />
+        </mesh>
+      ))}
+      {/* Ticker şeridi */}
+      <mesh position={[0, 0.65, -BLDG_D / 2 + 0.18]}>
+        <boxGeometry args={[4.0, 0.12, 0.02]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 2.0 : 0.3} toneMapped={false} />
+      </mesh>
+    </group>
+  );
+}
+
+// Medical: yatak + medikal ekipman
+function MedicalEquipment({ color, isActive }: { color: string; isActive: boolean }) {
+  return (
+    <group>
+      {/* Muayene yatağı */}
+      <mesh position={[-1.5, 0.45, -0.5]}>
+        <boxGeometry args={[1.2, 0.12, 2.2]} />
+        <meshStandardMaterial color="#1a2a3a" roughness={0.7} />
+      </mesh>
+      <mesh position={[-1.5, 0.3, -0.5]}>
+        <boxGeometry args={[1.2, 0.3, 2.2]} />
+        <meshStandardMaterial color="#0d1a28" />
+      </mesh>
+      {/* EKG monitörü */}
+      <mesh position={[-0.2, 1.1, -BLDG_D / 2 + 0.2]}>
+        <boxGeometry args={[0.7, 0.5, 0.08]} />
+        <meshStandardMaterial color="#050810" emissive={color} emissiveIntensity={isActive ? 0.4 : 0.1} />
+      </mesh>
+      {/* EKG çizgisi */}
+      <mesh position={[-0.2, 1.1, -BLDG_D / 2 + 0.25]}>
+        <boxGeometry args={[0.5, 0.02, 0.02]} />
+        <meshBasicMaterial color={color} />
+      </mesh>
+      {/* IV standı */}
+      <mesh position={[0.5, 1.0, -0.5]}>
+        <cylinderGeometry args={[0.02, 0.02, 2.0, 6]} />
+        <meshStandardMaterial color="#334" metalness={0.8} />
+      </mesh>
+      <mesh position={[0.5, 1.9, -0.5]}>
+        <sphereGeometry args={[0.12, 8, 8]} />
+        <meshStandardMaterial color={color} transparent opacity={0.6} />
+      </mesh>
+      {/* Raf */}
+      <mesh position={[BLDG_W / 2 - 0.3, 1.5, 0]}>
+        <boxGeometry args={[0.12, 0.06, 3.0]} />
+        <meshStandardMaterial color="#1a2a3a" />
+      </mesh>
+    </group>
+  );
+}
+
+// Hotel: resepsiyon tezgahı + kapı
+function HotelEquipment({ color, isActive }: { color: string; isActive: boolean }) {
+  return (
+    <group>
+      {/* Resepsiyon tezgahı */}
+      <mesh position={[0, 0.55, -1.5]}>
+        <boxGeometry args={[3.5, 0.1, 0.9]} />
+        <meshStandardMaterial color="#1a1a2e" metalness={0.5} roughness={0.4} emissive={color} emissiveIntensity={0.05} />
+      </mesh>
+      <mesh position={[0, 0.3, -1.5]}>
+        <boxGeometry args={[3.5, 0.5, 0.9]} />
+        <meshStandardMaterial color="#12122a" />
+      </mesh>
+      {/* Tezgah üstü monitör */}
+      <mesh position={[0.5, 0.9, -1.7]}>
+        <boxGeometry args={[0.55, 0.38, 0.04]} />
+        <meshStandardMaterial color="#050810" emissive={color} emissiveIntensity={isActive ? 0.5 : 0.1} />
+      </mesh>
+      {/* Kapı çerçevesi */}
+      <mesh position={[0, BLDG_H / 2, BLDG_D / 2 - 0.05]}>
+        <boxGeometry args={[1.0, BLDG_H, 0.1]} />
+        <meshStandardMaterial color={color} transparent opacity={0.12} roughness={0} />
+      </mesh>
+      {/* Kapı ışığı */}
+      <mesh position={[0, BLDG_H - 0.15, BLDG_D / 2 - 0.05]}>
+        <boxGeometry args={[1.0, 0.08, 0.06]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 2.0 : 0.4} toneMapped={false} />
+      </mesh>
+      {/* Bekleme koltuğu */}
+      <mesh position={[-1.5, 0.3, 1.2]}>
+        <boxGeometry args={[0.7, 0.12, 0.65]} />
+        <meshStandardMaterial color="#1a1a2e" roughness={0.8} />
+      </mesh>
+    </group>
+  );
+}
+
+// Software: server rack + kod ekranları
+function SoftwareEquipment({ color, isActive }: { color: string; isActive: boolean }) {
+  return (
+    <group>
+      {/* Server rack */}
+      <mesh position={[BLDG_W / 2 - 0.5, 1.0, -1.0]}>
+        <boxGeometry args={[0.6, 2.0, 0.9]} />
+        <meshStandardMaterial color="#0a0a18" metalness={0.7} roughness={0.3} />
+      </mesh>
+      {/* Server ışıkları */}
+      {([0.2, 0.5, 0.8, 1.1, 1.4, 1.7] as number[]).map((y, i) => (
+        <mesh key={i} position={[BLDG_W / 2 - 0.35, y, -1.0]}>
+          <boxGeometry args={[0.06, 0.04, 0.06]} />
+          <meshBasicMaterial color={i % 2 === 0 ? color : "#22c55e"} />
+        </mesh>
+      ))}
+      {/* Kod ekranı duvarı */}
+      <mesh position={[0, 1.5, -BLDG_D / 2 + 0.15]}>
+        <boxGeometry args={[3.5, 1.8, 0.06]} />
+        <meshStandardMaterial color="#050810" emissive={color} emissiveIntensity={isActive ? 0.2 : 0.04} />
+      </mesh>
+      {/* Kod satırları */}
+      {([0, 1, 2, 3, 4, 5, 6, 7] as number[]).map((row) => (
+        <mesh key={row} position={[-1.4 + (row % 4) * 0.9, 1.8 - Math.floor(row / 4) * 0.5, -BLDG_D / 2 + 0.2]}>
+          <boxGeometry args={[0.6 + Math.random() * 0.4, 0.04, 0.01]} />
+          <meshBasicMaterial color={row % 3 === 0 ? color : "#334466"} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+// Bots: data pipeline ekranları + anten
+function BotsEquipment({ color, isActive }: { color: string; isActive: boolean }) {
+  return (
+    <group>
+      {/* Büyük data ekranı */}
+      <mesh position={[0, 1.6, -BLDG_D / 2 + 0.15]}>
+        <boxGeometry args={[4.0, 1.8, 0.06]} />
+        <meshStandardMaterial color="#050810" emissive={color} emissiveIntensity={isActive ? 0.22 : 0.05} />
+      </mesh>
+      {/* Data akış çizgileri */}
+      {([0, 1, 2, 3, 4] as number[]).map((i) => (
+        <mesh key={i} position={[-1.6 + i * 0.8, 1.6, -BLDG_D / 2 + 0.2]}>
+          <boxGeometry args={[0.04, 1.4, 0.01]} />
+          <meshBasicMaterial color={color} transparent opacity={0.4 + i * 0.1} />
+        </mesh>
+      ))}
+      {/* Anten */}
+      <mesh position={[1.8, 1.6, 1.5]}>
+        <cylinderGeometry args={[0.03, 0.03, 2.0, 6]} />
+        <meshStandardMaterial color="#334" metalness={0.8} />
+      </mesh>
+      <mesh position={[1.8, 2.6, 1.5]}>
+        <sphereGeometry args={[0.1, 8, 8]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 3.0 : 0.5} toneMapped={false} />
+      </mesh>
+      {/* Bot istasyonları */}
+      {([-1.2, 0.0, 1.2] as number[]).map((x, i) => (
+        <group key={i} position={[x, 0, 1.0]}>
+          <mesh position={[0, 0.5, 0]}>
+            <cylinderGeometry args={[0.18, 0.22, 1.0, 8]} />
+            <meshStandardMaterial color="#0d1228" metalness={0.6} emissive={color} emissiveIntensity={isActive ? 0.1 : 0.02} />
+          </mesh>
+          <mesh position={[0, 1.1, 0]}>
+            <sphereGeometry args={[0.15, 8, 8]} />
+            <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 0.8 : 0.15} />
+          </mesh>
+        </group>
+      ))}
     </group>
   );
 }
@@ -344,45 +416,163 @@ function DeptBuilding({ dept, position, isActive, agentCount, activeCount }: Bui
 function Desk({ position, color }: { position: [number, number, number]; color: string }) {
   return (
     <group position={position}>
-      {/* Masa yüzeyi */}
-      <mesh position={[0, 0.4, 0]}>
-        <boxGeometry args={[0.75, 0.06, 0.52]} />
+      <mesh position={[0, 0.42, 0]}>
+        <boxGeometry args={[0.78, 0.06, 0.54]} />
         <meshStandardMaterial color="#1e2540" roughness={0.5} metalness={0.4} />
       </mesh>
-      {/* Bacaklar */}
-      {([[-0.32, 0.2, -0.22], [0.32, 0.2, -0.22], [-0.32, 0.2, 0.22], [0.32, 0.2, 0.22]] as [number, number, number][]).map(
-        ([lx, ly, lz], i) => (
-          <mesh key={i} position={[lx, ly, lz]}>
-            <boxGeometry args={[0.05, 0.4, 0.05]} />
-            <meshStandardMaterial color="#0d1228" />
-          </mesh>
-        )
-      )}
-      {/* Monitör */}
-      <mesh position={[0, 0.68, -0.17]}>
-        <boxGeometry args={[0.42, 0.3, 0.03]} />
-        <meshStandardMaterial
-          color={color}
-          emissive={color}
-          emissiveIntensity={0.5}
-          roughness={0.15}
-        />
+      {([[-0.33, 0.21, -0.23], [0.33, 0.21, -0.23], [-0.33, 0.21, 0.23], [0.33, 0.21, 0.23]] as [number,number,number][]).map(([lx, ly, lz], i) => (
+        <mesh key={i} position={[lx, ly, lz]}>
+          <boxGeometry args={[0.05, 0.42, 0.05]} />
+          <meshStandardMaterial color="#0d1228" />
+        </mesh>
+      ))}
+      <mesh position={[0, 0.70, -0.18]}>
+        <boxGeometry args={[0.44, 0.30, 0.03]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} roughness={0.15} />
       </mesh>
-      {/* Monitör standı */}
-      <mesh position={[0, 0.46, -0.17]}>
+      <mesh position={[0, 0.47, -0.18]}>
         <boxGeometry args={[0.05, 0.1, 0.05]} />
         <meshStandardMaterial color="#333" />
       </mesh>
-      {/* Sandalye */}
-      <mesh position={[0, 0.28, 0.42]}>
-        <boxGeometry args={[0.5, 0.06, 0.45]} />
+      <mesh position={[0, 0.30, 0.44]}>
+        <boxGeometry args={[0.52, 0.06, 0.46]} />
         <meshStandardMaterial color="#1a1a2e" roughness={0.8} />
       </mesh>
-      <mesh position={[0, 0.55, 0.62]}>
-        <boxGeometry args={[0.5, 0.5, 0.05]} />
+      <mesh position={[0, 0.56, 0.64]}>
+        <boxGeometry args={[0.52, 0.5, 0.05]} />
         <meshStandardMaterial color="#1a1a2e" roughness={0.8} />
       </mesh>
     </group>
+  );
+}
+
+// ─── CEO Binası ───────────────────────────────────────────────────────────────
+
+function CEOBuilding({ isActive }: { isActive: boolean }) {
+  const glowRef = useRef<THREE.PointLight>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
+
+  useFrame((state) => {
+    if (glowRef.current) {
+      glowRef.current.intensity = isActive ? 2.5 + Math.sin(state.clock.elapsedTime * 1.8) * 0.8 : 0.5;
+    }
+    if (ringRef.current) {
+      ringRef.current.rotation.z = state.clock.elapsedTime * 0.6;
+    }
+  });
+
+  return (
+    <group position={CEO_POSITION}>
+      <mesh position={[0, 2.5, 0]} castShadow>
+        <cylinderGeometry args={[1.0, 1.3, 5.0, 8]} />
+        <meshStandardMaterial color="#1a1a2e" emissive={CEO_COLOR} emissiveIntensity={isActive ? 0.15 : 0.05} metalness={0.8} roughness={0.2} />
+      </mesh>
+      <mesh position={[0, 5.2, 0]} castShadow>
+        <cylinderGeometry args={[1.5, 1.0, 0.3, 8]} />
+        <meshStandardMaterial color={CEO_COLOR} emissive={CEO_COLOR} emissiveIntensity={0.6} metalness={0.9} roughness={0.1} />
+      </mesh>
+      <mesh ref={ringRef} position={[0, 3.5, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1.8, 0.06, 8, 32]} />
+        <meshStandardMaterial color={CEO_COLOR} emissive={CEO_COLOR} emissiveIntensity={isActive ? 1.5 : 0.3} toneMapped={false} />
+      </mesh>
+      <pointLight ref={glowRef} color={CEO_COLOR} intensity={isActive ? 2.5 : 0.5} distance={12} position={[0, 5.5, 0]} />
+      {isActive && <Sparkles count={30} scale={[3, 3, 3]} size={1.8} speed={0.5} color={CEO_COLOR} position={[0, 5.5, 0]} />}
+      <Billboard position={[0, 7.0, 0]}>
+        <Text fontSize={0.4} color={CEO_COLOR} anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#000">
+          👑 CEO
+        </Text>
+        <Text fontSize={0.2} color="#aaaaaa" anchorX="center" anchorY="middle" position={[0, -0.55, 0]}>
+          {isActive ? "● Analiz ediyor" : "○ Bekliyor"}
+        </Text>
+      </Billboard>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]}>
+        <ringGeometry args={[2.0, 2.5, 48]} />
+        <meshBasicMaterial color={CEO_COLOR} transparent opacity={isActive ? 0.6 : 0.15} />
+      </mesh>
+    </group>
+  );
+}
+
+// ─── Cargo Drone ─────────────────────────────────────────────────────────────
+
+interface CargoDroneProps {
+  from: [number, number, number];
+  to: [number, number, number];
+  taskTitle: string;
+  onComplete: () => void;
+}
+
+function CargoDrone({ from, to, taskTitle, onComplete }: CargoDroneProps) {
+  const groupRef = useRef<THREE.Group>(null);
+  const t = useRef(0);
+  const done = useRef(false);
+
+  useFrame((_, delta) => {
+    if (!groupRef.current || done.current) return;
+    t.current = Math.min(1, t.current + delta * 0.7);
+    const v = t.current;
+    groupRef.current.position.set(
+      THREE.MathUtils.lerp(from[0], to[0], v),
+      Math.sin(v * Math.PI) * 5 + 1.5,
+      THREE.MathUtils.lerp(from[2], to[2], v)
+    );
+    groupRef.current.rotation.y = Math.atan2(to[0] - from[0], to[2] - from[2]);
+    if (t.current >= 1) { done.current = true; onComplete(); }
+  });
+
+  return (
+    <group ref={groupRef} position={[from[0], 1.5, from[2]]}>
+      <mesh>
+        <boxGeometry args={[0.3, 0.1, 0.3]} />
+        <meshStandardMaterial color={CARGO_COLOR} emissive={CARGO_COLOR} emissiveIntensity={0.8} metalness={0.7} />
+      </mesh>
+      {([[-0.25, 0, -0.25], [0.25, 0, -0.25], [-0.25, 0, 0.25], [0.25, 0, 0.25]] as [number,number,number][]).map(([ax, ay, az], i) => (
+        <group key={i} position={[ax, ay, az]}>
+          <mesh><cylinderGeometry args={[0.12, 0.12, 0.02, 6]} /><meshStandardMaterial color="#333" /></mesh>
+          <pointLight color={CARGO_COLOR} intensity={0.5} distance={1} />
+        </group>
+      ))}
+      <mesh position={[0, -0.18, 0]}>
+        <boxGeometry args={[0.18, 0.15, 0.18]} />
+        <meshStandardMaterial color="#ffd700" emissive="#ffd700" emissiveIntensity={0.3} />
+      </mesh>
+      <pointLight color={CARGO_COLOR} intensity={2} distance={3} />
+      <Billboard position={[0, 0.6, 0]}>
+        <Text fontSize={0.12} color={CARGO_COLOR} anchorX="center" anchorY="middle" outlineWidth={0.015} outlineColor="#000">
+          📦 {taskTitle.slice(0, 20)}
+        </Text>
+      </Billboard>
+    </group>
+  );
+}
+
+// ─── Mesaj Işını ──────────────────────────────────────────────────────────────
+
+function MessageBeam({ from, to, color, onComplete }: { from: string; to: string; color: string; onComplete: () => void }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const t = useRef(0);
+  const done = useRef(false);
+  const fp = DEPT_POSITIONS[from] || [0, 0, 0];
+  const tp = DEPT_POSITIONS[to] || [0, 0, 0];
+
+  useFrame((_, delta) => {
+    if (!meshRef.current || done.current) return;
+    t.current = Math.min(1, t.current + delta * 1.3);
+    const v = t.current;
+    meshRef.current.position.set(
+      THREE.MathUtils.lerp(fp[0], tp[0], v),
+      Math.sin(v * Math.PI) * 4,
+      THREE.MathUtils.lerp(fp[2], tp[2], v)
+    );
+    if (t.current >= 1) { done.current = true; onComplete(); }
+  });
+
+  return (
+    <mesh ref={meshRef} position={[fp[0], 0.5, fp[2]]}>
+      <sphereGeometry args={[0.15, 8, 8]} />
+      <meshStandardMaterial color={color} emissive={color} emissiveIntensity={3} toneMapped={false} />
+      <pointLight color={color} intensity={5} distance={3} />
+    </mesh>
   );
 }
 
@@ -411,19 +601,16 @@ function AgentMascot3D({ dept, index, isWorking, agentName, isSelected, onSelect
   const color = DEPT_COLORS[dept] || "#ffffff";
   const [hovered, setHovered] = useState(false);
 
-  // Dünya pozisyonu (CEO için kule üstü, diğerleri bina içi)
   const isCeo = dept === "management";
   const deptPos = isCeo ? CEO_POSITION : (DEPT_POSITIONS[dept] || [0, 0, 0]);
   const off = isCeo ? [0, 0, 0] : DESK_OFFSETS[index % DESK_OFFSETS.length];
   const wx = deptPos[0] + off[0];
-  const wy = isCeo ? 5.4 : 0; // CEO kule tepesinde
+  const wy = isCeo ? 5.4 : 0;
   const wz = deptPos[2] + off[2];
 
-  // GLB içindeki mesh'lerin kendi raycast'ini etkinleştir
   useEffect(() => {
     cloned.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
-        // Varsayılan raycast geri yükle
         (child as THREE.Mesh).raycast = THREE.Mesh.prototype.raycast;
       }
     });
@@ -432,45 +619,24 @@ function AgentMascot3D({ dept, index, isWorking, agentName, isSelected, onSelect
   useFrame((state) => {
     if (!groupRef.current) return;
     if (isWorking) {
-      groupRef.current.position.y =
-        Math.abs(Math.sin(state.clock.elapsedTime * 2.8 + index * 1.2)) * 0.07;
+      groupRef.current.position.y = wy + Math.abs(Math.sin(state.clock.elapsedTime * 2.8 + index * 1.2)) * 0.07;
     } else {
-      groupRef.current.position.y = 0;
-      groupRef.current.rotation.y =
-        Math.PI + Math.sin(state.clock.elapsedTime * 0.7 + index) * 0.18;
+      groupRef.current.position.y = wy;
+      groupRef.current.rotation.y = Math.PI + Math.sin(state.clock.elapsedTime * 0.7 + index) * 0.18;
     }
   });
 
-  const handleClick = useCallback(
-    (e: { stopPropagation: () => void }) => {
-      e.stopPropagation();
-      onSelect({
-        agentId: agentName,
-        dept,
-        worldPos: new THREE.Vector3(wx, wy, wz),
-      });
-    },
-    [agentName, dept, wx, wz, onSelect]
-  );
+  const handleClick = useCallback((e: { stopPropagation: () => void }) => {
+    e.stopPropagation();
+    onSelect({ agentId: agentName, dept, worldPos: new THREE.Vector3(wx, wy, wz) });
+  }, [agentName, dept, wx, wy, wz, onSelect]);
 
   return (
-    <group
-      ref={groupRef}
-      position={[wx, wy, wz]}
-      rotation={[0, Math.PI, 0]}
-    >
-      {/* ── Görünmez ama büyük tıklama alanı (hitbox) ── */}
+    <group ref={groupRef} position={[wx, wy, wz]} rotation={[0, Math.PI, 0]}>
+      {/* Görünmez hitbox */}
       <mesh
-        onPointerEnter={(e) => {
-          e.stopPropagation();
-          setHovered(true);
-          document.body.style.cursor = "pointer";
-        }}
-        onPointerLeave={(e) => {
-          e.stopPropagation();
-          setHovered(false);
-          document.body.style.cursor = "default";
-        }}
+        onPointerEnter={(e) => { e.stopPropagation(); setHovered(true); document.body.style.cursor = "pointer"; }}
+        onPointerLeave={(e) => { e.stopPropagation(); setHovered(false); document.body.style.cursor = "default"; }}
         onClick={handleClick}
         position={[0, 0.5, 0]}
       >
@@ -478,10 +644,8 @@ function AgentMascot3D({ dept, index, isWorking, agentName, isSelected, onSelect
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
 
-      {/* ── GLB maskot ── */}
       <primitive object={cloned} scale={[0.24, 0.24, 0.24]} />
 
-      {/* ── Seçili halka ── */}
       {isSelected && (
         <>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
@@ -492,73 +656,21 @@ function AgentMascot3D({ dept, index, isWorking, agentName, isSelected, onSelect
         </>
       )}
 
-      {/* ── Hover / seçili etiket ── */}
       {(hovered || isSelected) && (
         <Billboard position={[0, 1.1, 0]}>
-          <Text
-            fontSize={0.14}
-            color={color}
-            anchorX="center"
-            anchorY="middle"
-            outlineWidth={0.018}
-            outlineColor="#000000"
-          >
+          <Text fontSize={0.14} color={color} anchorX="center" anchorY="middle" outlineWidth={0.018} outlineColor="#000">
             {agentName.replace(/_/g, " ")}
           </Text>
-          <Text
-            fontSize={0.11}
-            color={isWorking ? "#88ff88" : "#888888"}
-            anchorX="center"
-            anchorY="middle"
-            position={[0, -0.2, 0]}
-          >
+          <Text fontSize={0.11} color={isWorking ? "#88ff88" : "#888888"} anchorX="center" anchorY="middle" position={[0, -0.2, 0]}>
             {isWorking ? "● çalışıyor" : "○ bekliyor"}
           </Text>
         </Billboard>
       )}
 
-      {/* ── Çalışırken ışık ── */}
       {isWorking && !isSelected && (
         <pointLight color={color} intensity={0.5} distance={1.4} position={[0, 0.5, 0]} />
       )}
     </group>
-  );
-}
-
-// ─── Mesaj Işını ──────────────────────────────────────────────────────────────
-
-interface BeamProps {
-  from: string;
-  to: string;
-  color: string;
-  onComplete: () => void;
-}
-
-function MessageBeam({ from, to, color, onComplete }: BeamProps) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const t = useRef(0);
-  const done = useRef(false);
-  const fp = DEPT_POSITIONS[from] || [0, 0, 0];
-  const tp = DEPT_POSITIONS[to] || [0, 0, 0];
-
-  useFrame((_, delta) => {
-    if (!meshRef.current || done.current) return;
-    t.current = Math.min(1, t.current + delta * 1.3);
-    const v = t.current;
-    meshRef.current.position.set(
-      THREE.MathUtils.lerp(fp[0], tp[0], v),
-      Math.sin(v * Math.PI) * 4,
-      THREE.MathUtils.lerp(fp[2], tp[2], v)
-    );
-    if (t.current >= 1) { done.current = true; onComplete(); }
-  });
-
-  return (
-    <mesh ref={meshRef} position={[fp[0], 0.5, fp[2]]}>
-      <sphereGeometry args={[0.15, 8, 8]} />
-      <meshStandardMaterial color={color} emissive={color} emissiveIntensity={3} toneMapped={false} />
-      <pointLight color={color} intensity={5} distance={3} />
-    </mesh>
   );
 }
 
@@ -570,15 +682,11 @@ function ThirdPersonCamera({ target }: { target: THREE.Vector3 }) {
   const camLook = useRef(new THREE.Vector3());
   const first = useRef(true);
 
-  useEffect(() => {
-    // Yeni agent seçilince anında konumlan
-    first.current = true;
-  }, [target]);
+  useEffect(() => { first.current = true; }, [target]);
 
   useFrame((_, delta) => {
-    const desired = new THREE.Vector3(target.x, target.y + 2.8, target.z + 4.0);
+    const desired = new THREE.Vector3(target.x, target.y + 2.8, target.z + 4.5);
     const look = new THREE.Vector3(target.x, target.y + 1.2, target.z);
-
     if (first.current) {
       camPos.current.copy(desired);
       camLook.current.copy(look);
@@ -587,7 +695,6 @@ function ThirdPersonCamera({ target }: { target: THREE.Vector3 }) {
       camPos.current.lerp(desired, Math.min(1, delta * 5));
       camLook.current.lerp(look, Math.min(1, delta * 6));
     }
-
     camera.position.copy(camPos.current);
     camera.lookAt(camLook.current);
   });
@@ -595,85 +702,27 @@ function ThirdPersonCamera({ target }: { target: THREE.Vector3 }) {
   return null;
 }
 
-// ─── Kamera HUD ───────────────────────────────────────────────────────────────
-
-function CameraHUD({ agent, onExit }: { agent: AgentRef; onExit: () => void }) {
-  const color = DEPT_COLORS[agent.dept] || "#fff";
-  return (
-    <Html fullscreen>
-      <div
-        style={{
-          position: "absolute",
-          bottom: 28,
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: "rgba(5,8,16,0.85)",
-          border: `1.5px solid ${color}`,
-          borderRadius: 12,
-          padding: "10px 24px",
-          display: "flex",
-          alignItems: "center",
-          gap: 18,
-          fontFamily: "monospace",
-          color: "#fff",
-          fontSize: 13,
-          backdropFilter: "blur(8px)",
-          zIndex: 200,
-          pointerEvents: "all",
-          whiteSpace: "nowrap",
-          boxShadow: `0 0 20px ${color}44`,
-        }}
-      >
-        <span style={{ color, fontSize: 16 }}>◉</span>
-        <span>
-          <b style={{ color }}>{agent.agentId.replace(/_/g, " ")}</b>
-          <span style={{ color: "#666", margin: "0 8px" }}>|</span>
-          <span style={{ color: "#aaa" }}>{DEPT_LABELS[agent.dept]}</span>
-        </span>
-        <button
-          onClick={onExit}
-          style={{
-            background: "rgba(255,255,255,0.08)",
-            border: "1px solid #333",
-            borderRadius: 7,
-            color: "#ccc",
-            padding: "4px 14px",
-            cursor: "pointer",
-            fontSize: 12,
-            transition: "all 0.15s",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.18)")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-        >
-          ✕ Çık
-        </button>
-      </div>
-    </Html>
-  );
-}
-
-// ─── Ana Sahne ────────────────────────────────────────────────────────────────
+// ─── Ana Sahne (Canvas içi) ───────────────────────────────────────────────────
 
 interface SceneProps {
   events: WorldEvent[];
   worldModels: AgentWorldModel[];
   selected: AgentRef | null;
   onSelect: (ref: AgentRef) => void;
-  onExit: () => void;
 }
 
 interface Beam { id: string; from: string; to: string; color: string; }
 interface CargoDroneData { id: string; from: [number,number,number]; to: [number,number,number]; taskTitle: string; }
 
-function Scene({ events, worldModels, selected, onSelect, onExit }: SceneProps) {
+function Scene({ events, worldModels, selected, onSelect }: SceneProps) {
   const [beams, setBeams] = useState<Beam[]>([]);
   const [drones, setDrones] = useState<CargoDroneData[]>([]);
   const lastLen = useRef(0);
 
-  // CEO aktif mi?
-  const isCeoActive = useMemo(() => {
-    return worldModels.some((m) => m.agent_id === "ceo" && !!m.current_task);
-  }, [worldModels]);
+  const isCeoActive = useMemo(() =>
+    worldModels.some((m) => m.agent_id === "ceo" && !!m.current_task),
+    [worldModels]
+  );
 
   useEffect(() => {
     if (events.length <= lastLen.current) return;
@@ -681,28 +730,24 @@ function Scene({ events, worldModels, selected, onSelect, onExit }: SceneProps) 
     lastLen.current = events.length;
     for (const ev of fresh) {
       if (ev.type === "agent_message" && ev.from_dept && ev.to_dept && ev.from_dept !== ev.to_dept) {
-        setBeams((p) => [
-          ...p.slice(-8),
-          { id: `${Date.now()}-${Math.random()}`, from: ev.from_dept!, to: ev.to_dept!, color: DEPT_COLORS[ev.from_dept!] || "#fff" },
-        ]);
+        setBeams((p) => [...p.slice(-8), {
+          id: `${Date.now()}-${Math.random()}`,
+          from: ev.from_dept!, to: ev.to_dept!,
+          color: DEPT_COLORS[ev.from_dept!] || "#fff",
+        }]);
       }
-      // CEO'dan görev delegasyonu → Cargo drone
       if (ev.type === "cargo_route" && ev.to_dept) {
         const toPos = DEPT_POSITIONS[ev.to_dept] || [0, 0, 0];
-        setDrones((p) => [
-          ...p.slice(-4),
-          {
-            id: `drone-${Date.now()}-${Math.random()}`,
-            from: CEO_POSITION,
-            to: toPos as [number, number, number],
-            taskTitle: ev.summary || "Görev",
-          },
-        ]);
+        setDrones((p) => [...p.slice(-4), {
+          id: `drone-${Date.now()}-${Math.random()}`,
+          from: CEO_POSITION,
+          to: toPos as [number, number, number],
+          taskTitle: ev.summary || "Görev",
+        }]);
       }
     }
   }, [events]);
 
-  // Departman istatistikleri
   const deptStats = useMemo(() => {
     const s: Record<string, { total: number; active: number }> = {};
     for (const dept of Object.keys(DEPT_POSITIONS)) {
@@ -715,20 +760,6 @@ function Scene({ events, worldModels, selected, onSelect, onExit }: SceneProps) 
     return s;
   }, [worldModels]);
 
-  // CEO agent modeli
-  const ceoAgent = useMemo(() => {
-    const found = worldModels.find((m) => m.agent_id === "ceo");
-    return found || ({
-      agent_id: "ceo",
-      current_task: null,
-      energy_level: 100,
-      expertise_score: 1.0,
-      trust_network: {},
-      idle_timeout_seconds: 60,
-    } as AgentWorldModel);
-  }, [worldModels]);
-
-  // Agent listesi (placeholder dahil)
   const agentsByDept = useMemo(() => {
     const map: Record<string, AgentWorldModel[]> = {};
     for (const dept of Object.keys(DEPT_POSITIONS)) {
@@ -740,10 +771,8 @@ function Scene({ events, worldModels, selected, onSelect, onExit }: SceneProps) 
         map[dept] = Array.from({ length: 3 }, (_, i) => ({
           agent_id: `${dept}_agent_${i + 1}`,
           current_task: i === 0 ? "idle" : null,
-          energy_level: 80,
-          expertise_score: 0.7,
-          trust_network: {},
-          idle_timeout_seconds: 30,
+          energy_level: 80, expertise_score: 0.7,
+          trust_network: {}, idle_timeout_seconds: 30,
         } as AgentWorldModel));
       }
     }
@@ -752,117 +781,121 @@ function Scene({ events, worldModels, selected, onSelect, onExit }: SceneProps) 
 
   return (
     <>
-      {/* Işıklar */}
-      <ambientLight intensity={0.4} />
-      <directionalLight position={[15, 20, 15]} intensity={1.0} castShadow shadow-mapSize={[2048, 2048]} />
-      <directionalLight position={[-15, 12, -15]} intensity={0.2} color="#4466ff" />
-      <hemisphereLight args={["#0a1030", "#050810", 0.45]} />
+      <ambientLight intensity={0.35} />
+      <directionalLight position={[15, 20, 15]} intensity={0.9} castShadow shadow-mapSize={[2048, 2048]} />
+      <directionalLight position={[-15, 12, -15]} intensity={0.18} color="#4466ff" />
+      <hemisphereLight args={["#0a1030", "#050810", 0.4]} />
 
-      {/* Zemin */}
       <Ground />
-
-      {/* CEO Merkezi Kule */}
       <CEOBuilding isActive={isCeoActive} />
 
-      {/* CEO Agent Maskotu (kule üzerinde) */}
+      {/* CEO maskotu */}
       <Suspense fallback={null}>
-        <AgentMascot3D
-          dept="management"
-          index={0}
-          isWorking={isCeoActive}
-          agentName="ceo"
-          isSelected={selected?.agentId === "ceo"}
-          onSelect={onSelect}
-        />
+        <AgentMascot3D dept="management" index={0} isWorking={isCeoActive}
+          agentName="ceo" isSelected={selected?.agentId === "ceo"} onSelect={onSelect} />
       </Suspense>
 
-      {/* Binalar + masalar */}
+      {/* Departman ofisleri + masalar + maskotlar */}
       {Object.entries(DEPT_POSITIONS).map(([dept, pos]) => {
         const st = deptStats[dept] || { total: 3, active: 0 };
-        const cnt = agentsByDept[dept]?.length || st.total;
+        const agents = agentsByDept[dept] || [];
+        const cnt = agents.length || st.total;
         return (
           <group key={dept}>
-            <Suspense fallback={null}>
-              <DeptBuilding
-                dept={dept}
-                position={pos}
-                isActive={st.active > 0}
-                agentCount={cnt}
-                activeCount={st.active}
-              />
-            </Suspense>
+            <OfficeInterior dept={dept} position={pos} isActive={st.active > 0} agentCount={cnt} activeCount={st.active} />
             {Array.from({ length: Math.min(cnt, DESK_OFFSETS.length) }).map((_, i) => {
               const o = DESK_OFFSETS[i];
-              return (
-                <Desk
-                  key={i}
-                  position={[pos[0] + o[0], 0, pos[2] + o[2]]}
-                  color={DEPT_COLORS[dept] || "#fff"}
-                />
-              );
+              return <Desk key={i} position={[pos[0] + o[0], 0, pos[2] + o[2]]} color={DEPT_COLORS[dept] || "#fff"} />;
             })}
+            {agents.map((agent, idx) => (
+              <Suspense key={agent.agent_id} fallback={null}>
+                <AgentMascot3D dept={dept} index={idx} isWorking={!!agent.current_task}
+                  agentName={agent.agent_id} isSelected={selected?.agentId === agent.agent_id} onSelect={onSelect} />
+              </Suspense>
+            ))}
           </group>
         );
       })}
 
-      {/* Agent maskotları */}
-      {Object.entries(agentsByDept).map(([dept, agents]) =>
-        agents.map((agent, idx) => (
-          <Suspense key={agent.agent_id} fallback={null}>
-            <AgentMascot3D
-              dept={dept}
-              index={idx}
-              isWorking={!!agent.current_task}
-              agentName={agent.agent_id}
-              isSelected={selected?.agentId === agent.agent_id}
-              onSelect={onSelect}
-            />
-          </Suspense>
-        ))
-      )}
-
-      {/* Cargo Drone'ları (CEO → Departman) */}
+      {/* Cargo drone'lar */}
       {drones.map((d) => (
-        <CargoDrone
-          key={d.id}
-          from={d.from}
-          to={d.to}
-          taskTitle={d.taskTitle}
-          onComplete={() => setDrones((p) => p.filter((x) => x.id !== d.id))}
-        />
+        <CargoDrone key={d.id} from={d.from} to={d.to} taskTitle={d.taskTitle}
+          onComplete={() => setDrones((p) => p.filter((x) => x.id !== d.id))} />
       ))}
 
       {/* Mesaj ışınları */}
       {beams.map((b) => (
-        <MessageBeam
-          key={b.id}
-          from={b.from}
-          to={b.to}
-          color={b.color}
-          onComplete={() => setBeams((p) => p.filter((x) => x.id !== b.id))}
-        />
+        <MessageBeam key={b.id} from={b.from} to={b.to} color={b.color}
+          onComplete={() => setBeams((p) => p.filter((x) => x.id !== b.id))} />
       ))}
 
       {/* Kamera */}
       {selected ? (
-        <>
-          <ThirdPersonCamera target={selected.worldPos} />
-          <CameraHUD agent={selected} onExit={onExit} />
-        </>
+        <ThirdPersonCamera target={selected.worldPos} />
       ) : (
-        <OrbitControls
-          enablePan
-          enableZoom
-          enableRotate
-          minDistance={5}
-          maxDistance={55}
+        <OrbitControls enablePan enableZoom enableRotate
+          minDistance={5} maxDistance={60}
           maxPolarAngle={Math.PI / 2 - 0.02}
-          target={[0, 1, 0]}
-        />
+          target={[0, 1, 0]} />
       )}
-
-      <Environment preset="night" />
     </>
+  );
+}
+
+// ─── Kamera HUD (Canvas DIŞINDA) ──────────────────────────────────────────────
+
+function CameraHUD({ agent, onExit }: { agent: AgentRef; onExit: () => void }) {
+  const color = DEPT_COLORS[agent.dept] || "#fff";
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 28,
+        left: "50%",
+        transform: "translateX(-50%)",
+        background: "rgba(5,8,16,0.92)",
+        border: `1.5px solid ${color}`,
+        borderRadius: 14,
+        padding: "10px 20px",
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        fontFamily: "monospace",
+        color: "#fff",
+        fontSize: 13,
+        backdropFilter: "blur(12px)",
+        zIndex: 100,
+        pointerEvents: "all",
+        whiteSpace: "nowrap",
+        boxShadow: `0 0 24px ${color}44`,
+        userSelect: "none",
+      }}
+    >
+      <span style={{ color, fontSize: 16 }}>◉</span>
+      <span>
+        <b style={{ color }}>{agent.agentId.replace(/_/g, " ")}</b>
+        <span style={{ color: "#555", margin: "0 8px" }}>|</span>
+        <span style={{ color: "#888" }}>{DEPT_LABELS[agent.dept] || agent.dept.toUpperCase()}</span>
+      </span>
+      <button
+        onClick={(e) => { e.stopPropagation(); onExit(); }}
+        style={{
+          background: "rgba(255,255,255,0.1)",
+          border: "1px solid #333",
+          borderRadius: 8,
+          color: "#ccc",
+          padding: "5px 16px",
+          cursor: "pointer",
+          fontSize: 12,
+          fontFamily: "monospace",
+          transition: "all 0.15s",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.22)")}
+        onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.1)")}
+      >
+        ✕ Çık
+      </button>
+    </div>
   );
 }
 
@@ -894,35 +927,26 @@ export default function World3DScene({
 
   return (
     <div className="w-full h-full relative" style={{ background: "#050810" }}>
-      {/* İpucu */}
+      {/* İpucu (sadece kamera serbest modda) */}
       {!selected && (
-        <div
-          style={{
-            position: "absolute",
-            top: 14,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "rgba(0,0,0,0.65)",
-            border: "1px solid #1a2a4a",
-            borderRadius: 8,
-            padding: "5px 18px",
-            fontFamily: "monospace",
-            fontSize: 11,
-            color: "#445566",
-            zIndex: 10,
-            pointerEvents: "none",
-            whiteSpace: "nowrap",
-          }}
-        >
+        <div style={{
+          position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)",
+          background: "rgba(0,0,0,0.65)", border: "1px solid #1a2a4a",
+          borderRadius: 8, padding: "5px 18px", fontFamily: "monospace",
+          fontSize: 11, color: "#445566", zIndex: 10, pointerEvents: "none", whiteSpace: "nowrap",
+        }}>
           Agent'a tıkla → 3. şahıs kamerası
         </div>
       )}
+
+      {/* Kamera HUD — Canvas DIŞINDA, her zaman tıklanabilir */}
+      {selected && <CameraHUD agent={selected} onExit={handleExit} />}
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
 
       <Canvas
         shadows
-        camera={{ position: [0, 20, 26], fov: 46 }}
+        camera={{ position: [0, 22, 28], fov: 46 }}
         gl={{ antialias: true, alpha: false }}
         style={{ background: "#050810" }}
       >
@@ -932,7 +956,6 @@ export default function World3DScene({
             worldModels={worldModels}
             selected={selected}
             onSelect={handleSelect}
-            onExit={handleExit}
           />
         </Suspense>
       </Canvas>
@@ -941,7 +964,6 @@ export default function World3DScene({
 }
 
 // Preload
-useGLTF.preload("/models/office_building.glb");
 useGLTF.preload("/models/trade_agent.glb");
 useGLTF.preload("/models/medical_agent.glb");
 useGLTF.preload("/models/hotel_agent.glb");
