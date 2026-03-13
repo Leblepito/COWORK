@@ -15,6 +15,8 @@ from .config import PORT, WORKSPACE
 from .database import setup_db
 from .database.connection import set_event_loop
 from .departments import DEPARTMENTS, ALL_AGENTS
+from .agents.world_model import get_world_model_manager
+from .agents.external_watcher import get_external_watcher
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -49,8 +51,21 @@ async def lifespan(app: FastAPI):
         (ws / "output").mkdir(exist_ok=True)
     logger.info(f"Workspace directories ready at {WORKSPACE}")
 
+    # Initialize WorldModel manager for all agents
+    wm_manager = get_world_model_manager()
+    for agent in ALL_AGENTS:
+        wm_manager.get_or_create(agent["id"])
+    logger.info(f"WorldModel manager initialized for {len(ALL_AGENTS)} agents")
+
+    # Start ExternalDataWatcher (5 data streams)
+    watcher = get_external_watcher()
+    await watcher.start()
+    logger.info("ExternalDataWatcher started (5 streams)")
+
     yield
 
+    # Shutdown: stop ExternalDataWatcher
+    await watcher.stop()
     logger.info("COWORK.ARMY shutting down...")
 
 

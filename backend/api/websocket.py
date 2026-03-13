@@ -1,7 +1,4 @@
-"""
-COWORK.ARMY v7.0 — WebSocket Hub
-Real-time agent status and event streaming.
-"""
+"""\nCOWORK.ARMY v7.0 — WebSocket Hub\nReal-time agent status and event streaming.\n\nDesteklenen event tipleri:\n- update: 2 saniyelik polling (statuses + events + world_models + scheduler_stats)\n- agent_message: agent'lar arası mesaj (AgentMessageBus tarafından gönderilir)\n- external_trigger: dış veri tetiklemesi (ExternalDataWatcher tarafından)\n- cascade_event: cascade zinciri adımı\n- cascade_complete: cascade zinciri tamamlandı\n"""
 import asyncio
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -34,11 +31,23 @@ async def websocket_events(websocket: WebSocket):
             events = await db.get_events(limit=10)
             event_count = await db.get_event_count()
 
+            # World model snapshots
+            try:
+                from ..agents.world_model import get_world_model_manager
+                from ..agents.scheduler import get_scheduler
+                world_models = get_world_model_manager().get_snapshot()
+                scheduler_stats = get_scheduler().get_stats()
+            except Exception:
+                world_models = []
+                scheduler_stats = {}
+
             payload = {
                 "type": "update",
                 "statuses": statuses,
                 "events": events,
                 "new_events": event_count > last_event_count,
+                "world_models": world_models,
+                "scheduler_stats": scheduler_stats,
             }
             last_event_count = event_count
 
