@@ -17,32 +17,56 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
+      - name: Verify Railway auth
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error::RAILWAY_TOKEN secret is not set in repository secrets!"
+            exit 1
+          fi
+          echo "Token present (${#RAILWAY_TOKEN} chars)"
+          railway whoami 2>&1 || {
+            echo "::error::Railway token is INVALID or EXPIRED. Please update RAILWAY_TOKEN in GitHub repo secrets."
+            echo "  1. Go to Railway dashboard → Account → Tokens"
+            echo "  2. Create a new token"
+            echo "  3. Go to GitHub repo → Settings → Secrets → Update RAILWAY_TOKEN"
+            exit 1
+          }
+
       - name: Deploy backend
         run: |
           cd backend
-          railway up --detach --service backend --environment production
+          echo "=== Deploying backend ==="
+          railway up --detach --service backend --environment production 2>&1
+          echo "Backend deploy triggered ✓"
+        timeout-minutes: 5
 
       - name: Deploy frontend
         run: |
           cd frontend
-          railway up --detach --service frontend --environment production
+          echo "=== Deploying frontend ==="
+          railway up --detach --service frontend --environment production 2>&1
+          echo "Frontend deploy triggered ✓"
+        timeout-minutes: 5
 
-      - name: Wait for deploys to build
-        run: sleep 60
+      - name: Wait for Railway builds
+        run: |
+          echo "Waiting 90s for Railway to build and deploy..."
+          sleep 90
 
       - name: Health check
+        continue-on-error: true
         run: |
-          echo "=== Backend ==="
-          BACKEND_STATUS=$(curl -s -o /tmp/be.txt -w "%{http_code}" \
-            "https://backend-production-2161.up.railway.app/api/info" --max-time 15 2>&1) || BACKEND_STATUS="timeout"
-          echo "HTTP: $BACKEND_STATUS"
+          echo "=== Backend Health ==="
+          BE=$(curl -s -o /tmp/be.txt -w "%{http_code}" \
+            "https://backend-production-2161.up.railway.app/api/info" --max-time 20) || BE="timeout"
+          echo "HTTP $BE"
           cat /tmp/be.txt 2>/dev/null | head -5
           echo ""
-          echo "=== Frontend (ireska.com) ==="
-          FE_STATUS=$(curl -s -o /tmp/fe.txt -w "%{http_code}" \
-            "https://ireska.com/" --max-time 15 2>&1) || FE_STATUS="timeout"
-          echo "HTTP: $FE_STATUS"
-          echo ""
-          echo "=== Health endpoint ==="
-          HEALTH=$(curl -s "https://ireska.com/api/health" --max-time 15 2>&1) || HEALTH="unreachable"
-          echo "$HEALTH"
+
+          echo "=== Frontend Health ==="
+          FE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://ireska.com/" --max-time 20) || FE="timeout"
+          echo "HTTP $FE"
+
+          echo "=== API Health ==="
+          curl -s "https://ireska.com/api/health" --max-time 20 || echo "unreachable"
