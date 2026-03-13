@@ -16,6 +16,19 @@ import {
   delegateCargo, createCoworkTask, spawnAgent,
 } from "@/lib/cowork-api";
 
+// CEO API
+async function getCeoStatus(): Promise<{ agent_id: string; current_task: string | null; is_active: boolean; tick_count: number; last_run?: string }> {
+  const base = process.env.NEXT_PUBLIC_COWORK_API_URL || "";
+  const res = await fetch(`${base}/cowork-api/agents/ceo/status`, { cache: "no-store" }).catch(() => null);
+  if (!res || !res.ok) return { agent_id: "ceo", current_task: null, is_active: false, tick_count: 0 };
+  return res.json();
+}
+
+async function triggerCeo(): Promise<void> {
+  const base = process.env.NEXT_PUBLIC_COWORK_API_URL || "";
+  await fetch(`${base}/cowork-api/agents/ceo/trigger`, { method: "POST" }).catch(() => null);
+}
+
 const DEPT_META: Record<string, { color: string; icon: string; gradient: string }> = {
   trade:    { color: "#a78bfa", icon: "📈", gradient: "from-violet-500/10 to-purple-600/5" },
   medical:  { color: "#22d3ee", icon: "🏥", gradient: "from-cyan-500/10 to-teal-600/5" },
@@ -34,6 +47,8 @@ export default function Home() {
   const [connError, setConnError] = useState<string>("");
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showCargoModal, setShowCargoModal] = useState(false);
+  const [ceoStatus, setCeoStatus] = useState<{ agent_id: string; current_task: string | null; is_active: boolean; tick_count: number; last_run?: string } | null>(null);
+  const [ceoTriggering, setCeoTriggering] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -52,6 +67,14 @@ export default function Home() {
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // CEO durumunu periyodik çek
+  useEffect(() => {
+    getCeoStatus().then(setCeoStatus);
+    const iv = setInterval(() => getCeoStatus().then(setCeoStatus), 3000);
+    return () => clearInterval(iv);
+  }, []);
+
   useEffect(() => {
     const iv = setInterval(async () => {
       try {
@@ -253,10 +276,92 @@ export default function Home() {
           })}
         </div>
 
-        {/* CARGO + EVENTS ROW */}
-        <div className="grid grid-cols-3 gap-4 max-w-5xl mx-auto">
+        {/* CEO + CARGO + EVENTS ROW */}
+        <div className="grid grid-cols-4 gap-4 max-w-5xl mx-auto">
+          {/* CEO WIDGET */}
+          <div className={`col-span-1 border rounded-2xl p-5 bg-gradient-to-br transition-all duration-500 ${
+            ceoStatus?.is_active
+              ? "border-yellow-500/40 from-yellow-500/10 to-amber-600/5 shadow-lg shadow-yellow-500/10"
+              : "border-yellow-500/15 from-yellow-500/5 to-amber-600/3"
+          }`}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl transition-all ${
+                ceoStatus?.is_active ? "bg-yellow-500/20 shadow-md shadow-yellow-500/20" : "bg-yellow-500/8"
+              }`}>
+                👑
+              </div>
+              <div className="flex-1">
+                <div className="text-xs font-bold tracking-wider text-yellow-400">CEO AGENT</div>
+                <div className="text-[10px] text-gray-500 mt-0.5">Sistem yöneticisi</div>
+              </div>
+              {/* Aktif/Pasif göstergesi */}
+              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-all ${
+                ceoStatus?.is_active ? "bg-green-500/15 border border-green-500/30" : "bg-gray-500/8 border border-gray-500/20"
+              }`}>
+                <div className={`w-2 h-2 rounded-full ${
+                  ceoStatus?.is_active ? "bg-green-500 animate-pulse" : "bg-gray-600"
+                }`} />
+                <span className={`text-[10px] font-code ${
+                  ceoStatus?.is_active ? "text-green-400" : "text-gray-500"
+                }`}>
+                  {ceoStatus?.is_active ? "AKTİF" : "PASIF"}
+                </span>
+              </div>
+            </div>
+
+            {/* Görev bilgisi */}
+            <div className="mb-3 min-h-[32px]">
+              {ceoStatus?.current_task ? (
+                <div className="text-[11px] text-yellow-300/80 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-3 py-1.5 font-code truncate">
+                  ● {ceoStatus.current_task}
+                </div>
+              ) : (
+                <div className="text-[11px] text-gray-600 font-code">
+                  Sonraki analiz bekleniyor...
+                </div>
+              )}
+            </div>
+
+            {/* İstatistikler */}
+            <div className="flex items-center gap-3 mb-3 text-[10px] font-code">
+              <div className="text-center">
+                <div className="text-yellow-400 font-bold">{ceoStatus?.tick_count ?? 0}</div>
+                <div className="text-gray-600">ANALIZ</div>
+              </div>
+              <div className="w-px h-6 bg-gray-700" />
+              <div className="flex-1 text-gray-500 truncate">
+                {ceoStatus?.last_run
+                  ? `Son: ${new Date(ceoStatus.last_run).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+                  : "Henüz çalışmadı"}
+              </div>
+            </div>
+
+            {/* Manuel tetikleme */}
+            <button
+              onClick={async () => {
+                setCeoTriggering(true);
+                await triggerCeo();
+                await new Promise(r => setTimeout(r, 800));
+                const s = await getCeoStatus();
+                setCeoStatus(s);
+                setCeoTriggering(false);
+              }}
+              disabled={ceoTriggering || !autoStatus?.running}
+              className={`w-full flex items-center justify-center gap-2 text-[11px] px-4 py-2 rounded-lg font-semibold border transition-all ${
+                ceoTriggering
+                  ? "bg-yellow-500/5 text-yellow-400/50 border-yellow-500/15 cursor-wait"
+                  : autoStatus?.running
+                  ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/25 hover:bg-yellow-500/20 cursor-pointer"
+                  : "bg-gray-500/5 text-gray-600 border-gray-500/15 cursor-not-allowed"
+              }`}
+            >
+              <span>{ceoTriggering ? "⏳" : "📊"}</span>
+              <span>{ceoTriggering ? "Analiz ediliyor..." : autoStatus?.running ? "Analizi Tetikle" : "Otonom mod kapalı"}</span>
+            </button>
+          </div>
+
           {/* CARGO SECTION */}
-          <div className="col-span-2 border border-pink-500/15 rounded-2xl p-5 bg-gradient-to-br from-pink-500/5 to-rose-600/3">
+          <div className="col-span-2 border border-pink-500/15 rounded-2xl p-5 bg-gradient-to-br from-pink-500/5 to-rose-600/3" style={{gridColumn: 'span 2'}}>
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-xl bg-pink-500/10 flex items-center justify-center text-xl">
                 📦
