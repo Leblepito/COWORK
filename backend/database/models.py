@@ -128,3 +128,101 @@ class CargoLog(Base):
         Index("ix_cargo_timestamp", "timestamp"),
         Index("ix_cargo_target_agent", "target_agent_id"),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AGENT WORLD — Yeni tablolar (Silicon Valley World özelliği)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import uuid as _uuid
+from sqlalchemy import Float
+
+
+class AgentMessage(Base):
+    """Agent'lar arası mesaj kaydı. AgentMessageBus tarafından yazılır."""
+    __tablename__ = "agent_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
+    from_agent: Mapped[str] = mapped_column(String(100), nullable=False)
+    to_agent: Mapped[str] = mapped_column(String(100), nullable=False)
+    message_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    priority: Mapped[str] = mapped_column(String(20), default="MEDIUM")
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    thread_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    cascade_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="SENT")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        Index("ix_agent_messages_from", "from_agent"),
+        Index("ix_agent_messages_to", "to_agent"),
+        Index("ix_agent_messages_cascade", "cascade_id"),
+        Index("ix_agent_messages_created", "created_at"),
+    )
+
+
+class AgentWorldModel(Base):
+    """Her agent'ın bilişsel durumu: uzmanlık, enerji, güven ağı."""
+    __tablename__ = "agent_world_models"
+
+    agent_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    expertise_score: Mapped[float] = mapped_column(Float, default=0.5)
+    trust_network: Mapped[dict] = mapped_column(JSON, default=dict)
+    energy_level: Mapped[float] = mapped_column(Float, default=1.0)
+    current_task: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    idle_timeout_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AgentEpisode(Base):
+    """Agent'ın tamamladığı görev geçmişi (episodik bellek)."""
+    __tablename__ = "agent_episodes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
+    agent_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    task_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)  # SUCCESS / FAILED / PARTIAL
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_agent_episodes_agent", "agent_id"),
+        Index("ix_agent_episodes_created", "created_at"),
+    )
+
+
+class SharedKnowledge(Base):
+    """Agent'lar arası paylaşılan bilgi (semantik bellek)."""
+    __tablename__ = "shared_knowledge"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
+    author_agent: Mapped[str] = mapped_column(String(100), nullable=False)
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    relevance_score: Mapped[float] = mapped_column(Float, default=0.5)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_shared_knowledge_category", "category"),
+        Index("ix_shared_knowledge_author", "author_agent"),
+    )
+
+
+class CascadeChain(Base):
+    """Dış tetikleyiciden başlayan cascade zinciri kaydı."""
+    __tablename__ = "cascade_chains"
+
+    cascade_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
+    trigger_source: Mapped[str] = mapped_column(String(100), nullable=False)
+    trigger_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    affected_departments: Mapped[list] = mapped_column(JSON, default=list)
+    depth: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        Index("ix_cascade_chains_started", "started_at"),
+    )

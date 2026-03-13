@@ -173,6 +173,18 @@ export default function Home() {
               <span className="text-[10px] text-green-400/60">Online</span>
             </div>
           )}
+          <Link
+            href="/world"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-mono font-bold transition-all hover:opacity-80"
+            style={{
+              background: "#00ff8812",
+              border: "1px solid #00ff8833",
+              color: "#00ff88",
+            }}
+          >
+            <span>🌍</span>
+            <span>World</span>
+          </Link>
         </div>
       </header>
 
