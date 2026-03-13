@@ -6,6 +6,11 @@ COPY . .
 # COWORK_API_URL baked into next.config.ts rewrites at build time
 ARG COWORK_API_URL=http://backend.railway.internal:8888
 ENV COWORK_API_URL=${COWORK_API_URL}
+# NEXT_PUBLIC_COWORK_WS_HOST: browser-side WebSocket URL for /world page
+# Set this in Railway frontend service env vars to your backend public domain
+# e.g. NEXT_PUBLIC_COWORK_WS_HOST=backend-production-3ddc.up.railway.app
+ARG NEXT_PUBLIC_COWORK_WS_HOST=""
+ENV NEXT_PUBLIC_COWORK_WS_HOST=${NEXT_PUBLIC_COWORK_WS_HOST}
 RUN npm run build
 
 FROM node:20-alpine AS runner
@@ -20,4 +25,4 @@ EXPOSE 3333
 ENV PORT=3333
 CMD ["node", "server.js"]
 
-# Cache bust: 20260313-094015
+# Cache bust: 20260314-world-ws-fix
