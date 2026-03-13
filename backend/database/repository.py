@@ -265,3 +265,101 @@ class Database:
             "target_agent_id": c.target_agent_id,
             "status": c.status, "prompt_generated": c.prompt_generated,
         }
+
+    # ── Agent World — AgentMessageBus DB methods ──
+
+    async def save_agent_message(self, msg: dict) -> str:
+        """Save an agent message to DB. Returns message id."""
+        from .models import AgentMessage
+        async with self._sf() as s:
+            obj = AgentMessage(**msg)
+            s.add(obj)
+            await s.commit()
+            return obj.id
+
+    async def get_agent_messages(self, limit: int = 50, cascade_id: str | None = None) -> list[dict]:
+        """Get recent agent messages, optionally filtered by cascade_id."""
+        from .models import AgentMessage
+        from sqlalchemy import desc
+        async with self._sf() as s:
+            q = select(AgentMessage).order_by(desc(AgentMessage.created_at)).limit(limit)
+            if cascade_id:
+                q = q.where(AgentMessage.cascade_id == cascade_id)
+            result = await s.execute(q)
+            rows = result.scalars().all()
+            return [
+                {
+                    "id": r.id, "from_agent": r.from_agent, "to_agent": r.to_agent,
+                    "message_type": r.message_type, "priority": r.priority,
+                    "payload": r.payload, "thread_id": r.thread_id,
+                    "cascade_id": r.cascade_id, "status": r.status,
+                    "created_at": r.created_at.isoformat() if r.created_at else "",
+                }
+                for r in rows
+            ]
+
+    async def upsert_world_model(self, agent_id: str, updates: dict) -> None:
+        """Upsert an agent's world model (expertise, energy, etc.)."""
+        from .models import AgentWorldModel
+        async with self._sf() as s:
+            stmt = pg_insert(AgentWorldModel).values(agent_id=agent_id, **updates)
+            stmt = stmt.on_conflict_do_update(index_elements=["agent_id"], set_=updates)
+            await s.execute(stmt)
+            await s.commit()
+
+    async def get_world_model(self, agent_id: str) -> dict | None:
+        """Get an agent's world model."""
+        from .models import AgentWorldModel
+        async with self._sf() as s:
+            result = await s.execute(
+                select(AgentWorldModel).where(AgentWorldModel.agent_id == agent_id)
+            )
+            row = result.scalar_one_or_none()
+            if not row:
+                return None
+            return {
+                "agent_id": row.agent_id,
+                "expertise_score": row.expertise_score,
+                "trust_network": row.trust_network,
+                "energy_level": row.energy_level,
+                "current_task": row.current_task,
+                "idle_timeout_seconds": row.idle_timeout_seconds,
+            }
+
+    async def save_cascade_chain(self, cascade: dict) -> str:
+        """Save a cascade chain record. Returns cascade_id."""
+        from .models import CascadeChain
+        async with self._sf() as s:
+            obj = CascadeChain(**cascade)
+            s.add(obj)
+            await s.commit()
+            return obj.cascade_id
+
+    async def complete_cascade_chain(self, cascade_id: str, depth: int) -> None:
+        """Mark a cascade chain as completed."""
+        from .models import CascadeChain
+        async with self._sf() as s:
+            await s.execute(
+                update(CascadeChain)
+                .where(CascadeChain.cascade_id == cascade_id)
+                .values(completed_at=datetime.now(timezone.utc), depth=depth)
+            )
+            await s.commit()
+
+    async def save_episode(self, episode: dict) -> str:
+        """Save an agent episode (task history)."""
+        from .models import AgentEpisode
+        async with self._sf() as s:
+            obj = AgentEpisode(**episode)
+            s.add(obj)
+            await s.commit()
+            return obj.id
+
+    async def save_shared_knowledge(self, knowledge: dict) -> str:
+        """Save shared knowledge entry."""
+        from .models import SharedKnowledge
+        async with self._sf() as s:
+            obj = SharedKnowledge(**knowledge)
+            s.add(obj)
+            await s.commit()
+            return obj.id
