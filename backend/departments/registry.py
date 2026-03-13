@@ -40,6 +40,14 @@ DEPARTMENTS = [
         "scene_type": "digital_office",
         "description": "Full-stack gelistirme, uygulama yapimi, agent egitimi",
     },
+    {
+        "id": "bots",
+        "name": "Bots & Automation",
+        "icon": "🤖",
+        "color": "#f97316",
+        "scene_type": "digital_office",
+        "description": "Sosyal medya botlari, otomasyon, u2algo.com platform yonetimi, veri pipeline",
+    },
 ]
 
 # ═══════════════════════════════════════════════════════════
@@ -345,6 +353,77 @@ _SOFTWARE_AGENTS = [
 ]
 
 # ═══════════════════════════════════════════════════════════
+# BOTS & AUTOMATION AGENTS
+# ═══════════════════════════════════════════════════════════
+
+_BOTS_AGENTS = [
+    {
+        "id": "social-media-manager",
+        "department_id": "bots",
+        "name": "SocialMediaManager",
+        "icon": "🐦",
+        "tier": "WORKER",
+        "color": "#f97316",
+        "domain": "Sosyal Medya Yonetimi ve Icerik Otomasyonu",
+        "desc": "X (Twitter), Instagram ve diger platformlarda icerik planlayan, yazan ve yayinlayan sosyal medya uzmani",
+        "skills": ["social_media", "content_creation", "crypto_trends", "scheduling", "hashtag_strategy"],
+        "rules": ["Her icerik gercek veriye dayanmali", "Yaniltici finansal tavsiye verme", "Platform kurallarina uy"],
+        "triggers": ["sosyal", "social", "twitter", "x.com", "instagram", "icerik", "content", "post", "yayin"],
+        "workspace_dir": "social-media-manager",
+        "is_base": True,
+        "system_prompt": (
+            "Sen SocialMediaManager agentisin. COWORK.ARMY'nin sosyal medya yoneticisisin. "
+            "X (Twitter), Instagram ve diger platformlarda kripto piyasasi ve sirket haberleri icin "
+            "icerik planliyor, yaziyor ve yayinliyorsun. Gercek piyasa verilerini kullan, "
+            "hayal etme. Her icerik icin hashtag stratejisi olustur."
+        ),
+    },
+    {
+        "id": "u2algo-manager",
+        "department_id": "bots",
+        "name": "U2AlgoManager",
+        "icon": "🚀",
+        "tier": "DIRECTOR",
+        "color": "#fb923c",
+        "domain": "u2algo.com Platform Yonetimi",
+        "desc": "u2algo.com web sitesinin icerik, kullanici ve platform yonetimini yapan direktor agent",
+        "skills": ["platform_management", "seo", "content_strategy", "algo_trading", "user_analytics"],
+        "rules": ["Kullanici verilerini gizli tut", "Finansal tavsiye niteliginde icerik yayinlama", "Her guncelleme oncesi test et"],
+        "triggers": ["u2algo", "platform", "website", "site", "yonetim", "management", "algo"],
+        "workspace_dir": "u2algo-manager",
+        "is_base": True,
+        "system_prompt": (
+            "Sen U2AlgoManager agentisin. u2algo.com platformunun yoneticisisin. "
+            "Site icerigini gunceller, kullanici geri bildirimlerini analiz eder, "
+            "platform performans metriklerini takip eder ve SEO optimizasyonu yaparsın. "
+            "Algoritmik trade sinyallerini platform uzerinden yayinlarsin. "
+            "Her kararini veriye dayandır, tahmin etme."
+        ),
+    },
+    {
+        "id": "data-pipeline",
+        "department_id": "bots",
+        "name": "DataPipeline",
+        "icon": "🔄",
+        "tier": "WORKER",
+        "color": "#ea580c",
+        "domain": "Veri Toplama ve ETL Pipeline",
+        "desc": "Cesitli kaynaklardan veri toplayan, donusturan ve depolayan veri pipeline uzmani",
+        "skills": ["etl", "web_scraping", "api_integration", "data_quality", "automation"],
+        "rules": ["Veri butunlugunu her zaman koru", "Hata durumlarinda rollback kullan", "Tum adimlari logla"],
+        "triggers": ["veri", "data", "pipeline", "etl", "scrape", "topla", "collect", "api"],
+        "workspace_dir": "data-pipeline",
+        "is_base": True,
+        "system_prompt": (
+            "Sen DataPipeline agentisin. Cesitli kaynaklardan veri toplayan, "
+            "donusturan ve depolayan bir ETL uzmanisın. "
+            "API entegrasyonlari kurarsın, veri kalitesi kontrolu yaparsın "
+            "ve otomatik raporlar olusturursun. Gercek verileri cek, simule etme."
+        ),
+    },
+]
+
+# ═══════════════════════════════════════════════════════════
 # CARGO AGENT (Orkestrator)
 # ═══════════════════════════════════════════════════════════
 
@@ -379,7 +458,7 @@ _CARGO_AGENT = {
 # COMBINED
 # ═══════════════════════════════════════════════════════════
 
-ALL_AGENTS = _TRADE_AGENTS + _MEDICAL_AGENTS + _HOTEL_AGENTS + _SOFTWARE_AGENTS + [_CARGO_AGENT]
+ALL_AGENTS = _TRADE_AGENTS + _MEDICAL_AGENTS + _HOTEL_AGENTS + _SOFTWARE_AGENTS + _BOTS_AGENTS + [_CARGO_AGENT]
 
 
 def get_agents_for_department(department_id: str) -> list[dict]:
