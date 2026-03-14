@@ -7,7 +7,7 @@ async def test_get_dept_deep_dive_trade():
     db = AsyncMock()
     db.get_events.return_value = [{"summary": "BTC signal: LONG"}]
     result = await get_dept_deep_dive(db, "trade")
-    assert "Trade Departmanı Derinlemesine Analiz" in result
+    assert "Trade Departmani -- Derinlemesine Analiz" in result
     assert "BTC signal: LONG" in result
 
 @pytest.mark.asyncio
@@ -27,5 +27,5 @@ async def test_prioritize_and_delegate(mock_delegate):
     ]
     result = await prioritize_and_delegate(improvements)
     assert len(result) == 2
-    mock_delegate.assert_any_call(title="Test görevi 1", description="Test görevi 1", target_department_id="trade")
-    mock_delegate.assert_any_call(title="Test görevi 2", description="Test görevi 2", target_department_id="software")
+    mock_delegate.assert_any_call(title="Test görevi 1", description="[CEO BRAINSTORM] Test görevi 1", target_department_id="trade")
+    mock_delegate.assert_any_call(title="Test görevi 2", description="[CEO BRAINSTORM] Test görevi 2", target_department_id="software")

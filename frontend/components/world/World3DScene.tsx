@@ -641,6 +641,15 @@ function AgentSidePanel({
       </div>
       {!collapsed && (
         <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
+          {/* Yükleniyor iskeleti */}
+          {worldModels.length === 0 && (
+            <div style={{ padding: "12px 10px" }}>
+              {[1,2,3,4].map(i => (
+                <div key={i} style={{ height: 28, background: "#0e1a2e", borderRadius: 4, marginBottom: 6, opacity: 0.6 }} />
+              ))}
+              <div style={{ fontSize: 8, color: "#334", textAlign: "center", marginTop: 8 }}>Bağlanıyor...</div>
+            </div>
+          )}
           {/* CEO önce */}
           {worldModels.filter(m => m.agent_id === "ceo").map(m => {
             const st = statuses[m.agent_id];
@@ -873,7 +882,7 @@ function Scene({ events, worldModels, selected, onSelect, statuses, navigateTo }
       {selected
         ? <ThirdPersonCamera target={selected.worldPos} />
         : navigateTo
-          ? <><OrbitControls makeDefault minDistance={4} maxDistance={60} maxPolarAngle={Math.PI / 2.1} /><CameraNavigate target={navigateTo} /></>
+          ? <><OrbitControls makeDefault={false} enabled={false} minDistance={4} maxDistance={60} maxPolarAngle={Math.PI / 2.1} /><CameraNavigate target={navigateTo} /></>
           : <OrbitControls makeDefault minDistance={4} maxDistance={60} maxPolarAngle={Math.PI / 2.1} target={[0, 1, 0]} />
       }
     </>
