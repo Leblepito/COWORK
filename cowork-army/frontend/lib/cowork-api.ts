@@ -144,6 +144,52 @@ export async function setLlmProvider(provider: string): Promise<{ status: string
   return res.json();
 }
 
+// ── Animation API ──
+export interface AnimationState {
+  mood: string;
+  energy: number;
+  animation_state: Record<string, unknown>;
+}
+
+export const getAnimationStates = () =>
+  coworkFetch<Record<string, AnimationState>>("/animations/states");
+
+export async function setAgentMood(
+  agentId: string, mood: string, energy?: number
+): Promise<{ agent_id: string; mood: string; energy: number }> {
+  const fd = new FormData();
+  fd.append("mood", mood);
+  if (energy !== undefined) fd.append("energy", String(energy));
+  const res = await fetch(`${BASE}/animations/mood/${agentId}`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function triggerAnimation(
+  agentId: string, animation: string, params: Record<string, unknown> = {}
+): Promise<{ agent_id: string; animation: string; params: Record<string, unknown> }> {
+  const fd = new FormData();
+  fd.append("animation", animation);
+  fd.append("params", JSON.stringify(params));
+  const res = await fetch(`${BASE}/animations/trigger/${agentId}`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function broadcastAnimation(
+  animation: string, params: Record<string, unknown> = {}
+): Promise<{ animation: string; triggered: string[]; count: number }> {
+  const fd = new FormData();
+  fd.append("animation", animation);
+  fd.append("params", JSON.stringify(params));
+  const res = await fetch(`${BASE}/animations/broadcast`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export const getAnimationEvents = (limit = 20, since = "") =>
+  coworkFetch<AutonomousEvent[]>(`/animations/events?limit=${limit}&since=${encodeURIComponent(since)}`);
+
 // ── Agent CRUD (object-based interface) ──
 export interface CreateAgentInput {
   id?: string; name: string; icon: string; tier: string; color: string;

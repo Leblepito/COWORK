@@ -120,6 +120,7 @@ def _run(proc: AgentProc, task: str):
         proc.status = "error"; proc.log("Agent not found"); return
 
     proc.status = "thinking"
+    _sync_db(db.update_agent_mood(proc.agent_id, "focused", 90))
 
     provider_name, api_key, model = _get_llm_config()
     provider_label = "Gemini" if provider_name == "gemini" else "Claude"
@@ -193,10 +194,14 @@ Isini bitirdiginde sonucu ozetle."""
         _save_output(proc.agent_id, task, collected_text, proc)
         proc.status = "done"
         proc.log("Gorev tamamlandi!")
+        _sync_db(db.update_agent_mood(proc.agent_id, "happy", 70))
+        _sync_db(db.add_animation_event(proc.agent_id, "celebrate", {"reason": "task_complete"}))
         _sync_db(db.add_event(proc.agent_id, f"Gorev tamamlandi: {task[:50]}", "info"))
     except Exception as e:
         proc.status = "error"
         proc.log(f"Hata: {e}")
+        _sync_db(db.update_agent_mood(proc.agent_id, "stressed", 30))
+        _sync_db(db.add_animation_event(proc.agent_id, "alert", {"reason": "error", "error": str(e)[:100]}))
         _sync_db(db.add_event(proc.agent_id, f"Hata: {e}", "warning"))
 
 

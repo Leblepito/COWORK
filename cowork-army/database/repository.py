@@ -33,6 +33,9 @@ class Database:
                 system_prompt=a.get("system_prompt", ""),
                 workspace_dir=a.get("workspace_dir", a["id"]),
                 is_base=bool(a.get("is_base", False)),
+                mood=a.get("mood", "neutral"),
+                energy=a.get("energy", 100),
+                animation_state=a.get("animation_state", {}),
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["id"],
@@ -49,6 +52,9 @@ class Database:
                     "system_prompt": stmt.excluded.system_prompt,
                     "workspace_dir": stmt.excluded.workspace_dir,
                     "is_base": stmt.excluded.is_base,
+                    "mood": stmt.excluded.mood,
+                    "energy": stmt.excluded.energy,
+                    "animation_state": stmt.excluded.animation_state,
                     "updated_at": datetime.now(timezone.utc),
                 },
             )
@@ -162,6 +168,54 @@ class Database:
 
     # ── Dict converters (backward compatibility) ──
 
+    async def update_agent_mood(self, agent_id: str, mood: str, energy: int | None = None):
+        """Update agent mood and optionally energy."""
+        async with self._sf() as session:
+            values: dict = {"mood": mood, "updated_at": datetime.now(timezone.utc)}
+            if energy is not None:
+                values["energy"] = max(0, min(100, energy))
+            await session.execute(
+                update(Agent).where(Agent.id == agent_id).values(**values)
+            )
+            await session.commit()
+
+    async def update_agent_animation_state(self, agent_id: str, animation_state: dict):
+        """Update agent animation state (custom animation triggers)."""
+        async with self._sf() as session:
+            await session.execute(
+                update(Agent).where(Agent.id == agent_id).values(
+                    animation_state=animation_state,
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+            await session.commit()
+
+    async def add_animation_event(self, agent_id: str, animation_type: str, animation_data: dict):
+        """Add an animation-specific event."""
+        async with self._sf() as session:
+            event = Event(
+                agent_id=agent_id,
+                message=f"animation:{animation_type}",
+                type="animation",
+                animation_data=animation_data,
+            )
+            session.add(event)
+            await session.commit()
+
+    async def get_animation_events(self, limit: int = 20, since: str = "") -> list[dict]:
+        """Get recent animation events."""
+        async with self._sf() as session:
+            query = select(Event).where(Event.type == "animation")
+            if since:
+                try:
+                    since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+                    query = query.where(Event.timestamp > since_dt)
+                except ValueError:
+                    pass
+            query = query.order_by(Event.id.desc()).limit(limit)
+            result = await session.execute(query)
+            return [self._event_to_dict(e) for e in result.scalars().all()]
+
     @staticmethod
     def _agent_to_dict(a: Agent) -> dict:
         return {
@@ -170,6 +224,8 @@ class Database:
             "skills": a.skills or [], "rules": a.rules or [],
             "triggers": a.triggers or [], "system_prompt": a.system_prompt,
             "workspace_dir": a.workspace_dir, "is_base": a.is_base,
+            "mood": a.mood or "neutral", "energy": a.energy if a.energy is not None else 100,
+            "animation_state": a.animation_state or {},
             "created_at": a.created_at.isoformat() if a.created_at else "",
         }
 
@@ -189,4 +245,5 @@ class Database:
         return {
             "timestamp": e.timestamp.isoformat() if e.timestamp else "",
             "agent_id": e.agent_id, "message": e.message, "type": e.type,
+            "animation_data": e.animation_data or {},
         }

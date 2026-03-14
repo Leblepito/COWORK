@@ -5,11 +5,12 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
-import type { CoworkAgent, AgentStatus, CoworkTask, AutonomousEvent, AutonomousStatus, ServerInfo, ApiKeyStatus } from "@/lib/cowork-api";
+import type { CoworkAgent, AgentStatus, CoworkTask, AutonomousEvent, AutonomousStatus, ServerInfo, ApiKeyStatus, AnimationState } from "@/lib/cowork-api";
 import { getCoworkAgents, getAgentStatuses, getAutonomousEvents, getAutonomousStatus,
   getServerInfo, spawnAgent, killAgent, startAutonomousLoop, stopAutonomousLoop,
   createCoworkTask, createAgent, deleteAgent,
-  getApiKeyStatus, saveApiKey, setLlmProvider } from "@/lib/cowork-api";
+  getApiKeyStatus, saveApiKey, setLlmProvider,
+  getAnimationStates, triggerAnimation, broadcastAnimation } from "@/lib/cowork-api";
 import { AGENT_DEPARTMENT, DEPT_COLORS } from "@/components/cowork-army/scene-constants";
 
 const CoworkOffice3D = dynamic(() => import("@/components/cowork-army/CoworkOffice3D"), { ssr: false });
@@ -20,20 +21,25 @@ export default function Home() {
   const [events, setEvents] = useState<AutonomousEvent[]>([]);
   const [autoStatus, setAutoStatus] = useState<AutonomousStatus | null>(null);
   const [info, setInfo] = useState<ServerInfo | null>(null);
+  const [animStates, setAnimStates] = useState<Record<string, AnimationState>>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [dayNightEnabled, setDayNightEnabled] = useState(true);
+  const [weatherType, setWeatherType] = useState<"fireflies" | "rain" | "snow" | "energy">("fireflies");
   const [error, setError] = useState("");
 
   // ── Data Fetching ──
   const fetchAll = useCallback(async () => {
     try {
-      const [ag, st, ev, au, inf] = await Promise.all([
+      const [ag, st, ev, au, inf, anim] = await Promise.all([
         getCoworkAgents(), getAgentStatuses(), getAutonomousEvents(30),
         getAutonomousStatus(), getServerInfo(),
+        getAnimationStates().catch(() => ({})),
       ]);
       setAgents(ag); setStatuses(st); setEvents(ev); setAutoStatus(au); setInfo(inf);
+      setAnimStates(anim as Record<string, AnimationState>);
       setError("");
     } catch (e: unknown) {
       setError("Backend bağlantı hatası — python server.py çalışıyor mu?");
@@ -44,10 +50,13 @@ export default function Home() {
   useEffect(() => {
     const i1 = setInterval(async () => {
       try {
-        const [st, ev, au] = await Promise.all([
+        const [st, ev, au, anim] = await Promise.all([
           getAgentStatuses(), getAutonomousEvents(30), getAutonomousStatus(),
+          getAnimationStates().catch(() => ({})),
         ]);
-        setStatuses(st); setEvents(ev); setAutoStatus(au); setError("");
+        setStatuses(st); setEvents(ev); setAutoStatus(au);
+        setAnimStates(anim as Record<string, AnimationState>);
+        setError("");
       } catch {}
     }, 2000);
     return () => clearInterval(i1);
@@ -66,7 +75,7 @@ export default function Home() {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-sm">👑</div>
           <div>
             <h1 className="text-xs font-extrabold tracking-[3px]">COWORK<span className="text-amber-400">.ARMY</span></h1>
-            <p className="text-[8px] text-gray-500 tracking-wider">v7 • {info?.agents ?? 0} AGENTS • 4 DEPTS • AUTONOMOUS</p>
+            <p className="text-[8px] text-gray-500 tracking-wider">v9 • {info?.agents ?? 0} AGENTS • 4 DEPTS • ANIMATED</p>
           </div>
         </div>
         <div className="flex items-center gap-4 text-center">
@@ -155,7 +164,15 @@ export default function Home() {
 
         {/* CENTER: 3D */}
         <main className="flex-1 relative">
-          <CoworkOffice3D agents={agents} statuses={statuses} events={events} />
+          <CoworkOffice3D
+            agents={agents}
+            statuses={statuses}
+            events={events}
+            animationStates={animStates}
+            autonomousActive={autoStatus?.running ?? false}
+            dayNightEnabled={dayNightEnabled}
+            weatherType={weatherType}
+          />
           {/* Agent detail overlay */}
           {selAgent && (
             <div className="absolute top-2 left-2 w-[260px] bg-[#0b0c14]/95 border border-[#1a1f30] rounded-lg p-3 backdrop-blur z-10">
@@ -231,6 +248,38 @@ export default function Home() {
             </div>
             <div className="text-[8px]">{info?.name} v{info?.version}</div>
             <div className="text-[8px] text-gray-400">Agents: {info?.agents} | Ticks: {autoStatus?.tick_count}</div>
+          </div>
+          {/* Animation Controls */}
+          <div className="px-3 py-2 border-b border-[#1a1f3030] space-y-1.5">
+            <div className="text-[7px] text-gray-500 tracking-[2px]">ANIMATIONS</div>
+            <div className="flex gap-1">
+              <button onClick={() => setDayNightEnabled(!dayNightEnabled)}
+                className={`text-[6px] px-2 py-0.5 rounded font-bold border ${
+                  dayNightEnabled ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-gray-500/10 text-gray-400 border-gray-500/30"
+                }`}>
+                {dayNightEnabled ? "☀ D/N ON" : "☀ D/N OFF"}
+              </button>
+              <select value={weatherType} onChange={e => setWeatherType(e.target.value as typeof weatherType)}
+                className="text-[6px] px-1 py-0.5 rounded bg-[#0a0b12] text-gray-400 border border-gray-500/30">
+                <option value="fireflies">Fireflies</option>
+                <option value="rain">Rain</option>
+                <option value="snow">Snow</option>
+              </select>
+            </div>
+            <div className="flex gap-1">
+              <button onClick={() => broadcastAnimation("celebrate").catch(() => {})}
+                className="text-[6px] px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 font-bold">
+                Celebrate
+              </button>
+              <button onClick={() => broadcastAnimation("alert").catch(() => {})}
+                className="text-[6px] px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/30 font-bold">
+                Alert
+              </button>
+              <button onClick={() => broadcastAnimation("power_up").catch(() => {})}
+                className="text-[6px] px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 font-bold">
+                Power Up
+              </button>
+            </div>
           </div>
           {/* Events */}
           <div className="flex-1 overflow-y-auto p-2 space-y-1">

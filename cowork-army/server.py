@@ -6,6 +6,7 @@ FastAPI backend matching CLAUDE.md spec exactly.
 import asyncio
 import uvicorn, os, uuid, logging
 from pathlib import Path
+from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -193,6 +194,84 @@ async def api_set_key(key: str = Form(...)):
     env.write_text("\n".join(lines) + "\n")
     os.environ["ANTHROPIC_API_KEY"] = key
     return {"status": "saved", "preview": key[:12] + "..."}
+
+# ══════════════ ANIMATION ══════════════
+@app.get("/api/animations/states")
+async def api_animation_states():
+    """Get all agents' mood, energy, and animation state."""
+    db = get_db()
+    agents = await db.get_all_agents()
+    return {
+        a["id"]: {
+            "mood": a.get("mood", "neutral"),
+            "energy": a.get("energy", 100),
+            "animation_state": a.get("animation_state", {}),
+        }
+        for a in agents
+    }
+
+@app.post("/api/animations/mood/{agent_id}")
+async def api_set_mood(agent_id: str, mood: str = Form(...), energy: int = Form(None)):
+    """Set agent mood and energy level. Moods: neutral, happy, focused, stressed, excited, tired."""
+    db = get_db()
+    a = await db.get_agent(agent_id)
+    if not a:
+        return JSONResponse({"error": "not found"}, 404)
+    valid_moods = ["neutral", "happy", "focused", "stressed", "excited", "tired", "celebrating"]
+    if mood not in valid_moods:
+        return JSONResponse({"error": f"Invalid mood. Valid: {valid_moods}"}, 400)
+    await db.update_agent_mood(agent_id, mood, energy)
+    await db.add_animation_event(agent_id, "mood_change", {"mood": mood, "energy": energy})
+    return {"agent_id": agent_id, "mood": mood, "energy": energy}
+
+@app.post("/api/animations/trigger/{agent_id}")
+async def api_trigger_animation(agent_id: str, animation: str = Form(...), params: str = Form("{}")):
+    """Trigger a specific animation on an agent.
+    Animations: spawn, despawn, celebrate, alert, power_up, shake, teleport.
+    """
+    import json as _json
+    db = get_db()
+    a = await db.get_agent(agent_id)
+    if not a:
+        return JSONResponse({"error": "not found"}, 404)
+    valid_anims = ["spawn", "despawn", "celebrate", "alert", "power_up", "shake", "teleport"]
+    if animation not in valid_anims:
+        return JSONResponse({"error": f"Invalid animation. Valid: {valid_anims}"}, 400)
+    try:
+        anim_params = _json.loads(params)
+    except _json.JSONDecodeError:
+        anim_params = {}
+    anim_data = {"animation": animation, "params": anim_params, "triggered_at": datetime.now().isoformat()}
+    await db.update_agent_animation_state(agent_id, anim_data)
+    await db.add_animation_event(agent_id, animation, anim_data)
+    return {"agent_id": agent_id, "animation": animation, "params": anim_params}
+
+@app.get("/api/animations/events")
+async def api_animation_events(limit: int = 20, since: str = ""):
+    """Get recent animation events."""
+    db = get_db()
+    return await db.get_animation_events(limit, since)
+
+@app.post("/api/animations/broadcast")
+async def api_broadcast_animation(animation: str = Form(...), params: str = Form("{}")):
+    """Trigger an animation on ALL agents (e.g., celebrate, alert)."""
+    import json as _json
+    db = get_db()
+    agents = await db.get_all_agents()
+    valid_anims = ["celebrate", "alert", "power_up", "shake"]
+    if animation not in valid_anims:
+        return JSONResponse({"error": f"Invalid broadcast animation. Valid: {valid_anims}"}, 400)
+    try:
+        anim_params = _json.loads(params)
+    except _json.JSONDecodeError:
+        anim_params = {}
+    triggered = []
+    for a in agents:
+        anim_data = {"animation": animation, "params": anim_params, "triggered_at": datetime.now().isoformat()}
+        await db.update_agent_animation_state(a["id"], anim_data)
+        await db.add_animation_event(a["id"], animation, anim_data)
+        triggered.append(a["id"])
+    return {"animation": animation, "triggered": triggered, "count": len(triggered)}
 
 # ══════════════ WORKSPACE ══════════════
 @app.get("/api/workspace/{agent_id}")

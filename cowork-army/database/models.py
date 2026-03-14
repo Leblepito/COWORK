@@ -32,6 +32,9 @@ class Agent(Base):
     system_prompt: Mapped[str] = mapped_column(Text, default="")
     workspace_dir: Mapped[str] = mapped_column(String(200), default="")
     is_base: Mapped[bool] = mapped_column(Boolean, default=False)
+    mood: Mapped[str] = mapped_column(String(30), default="neutral")
+    energy: Mapped[int] = mapped_column(Integer, default=100)
+    animation_state: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow, onupdate=_utcnow)
 
@@ -64,6 +67,7 @@ class Event(Base):
     agent_id: Mapped[str] = mapped_column(String(100), default="")
     message: Mapped[str] = mapped_column(Text, default="")
     type: Mapped[str] = mapped_column(String(30), default="info")
+    animation_data: Mapped[dict] = mapped_column(JSON, default=dict)
 
     __table_args__ = (
         Index("ix_events_timestamp", "timestamp"),
