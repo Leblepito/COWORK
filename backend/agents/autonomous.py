@@ -15,7 +15,7 @@ logger = logging.getLogger("autonomous")
 
 from ..database.repository import Database
 
-CEO_TICK_INTERVAL = 6  # Run CEO agent every 6 ticks (60 seconds)
+CEO_TICK_INTERVAL = 360  # Run CEO agent every 6 ticks (60 seconds)
 
 class AutonomousLoop:
     def __init__(self):
@@ -107,7 +107,7 @@ class AutonomousLoop:
                 "ceo_trigger",
                 department_id="management",
             )
-            await spawn_agent(ceo_id, "Sistemin genel durumunu analiz et, gerekli görevleri oluştur ve delege et.")
+            await spawn_agent(ceo_id, "Saatlik stratejik analiz döngüsünü başlat: tüm departmanları analiz et, iyileştirme önerileri geliştir ve en kritik olanları delege et.")
         except Exception as e:
             logger.error(f"Error triggering CEO agent: {e}")
 
