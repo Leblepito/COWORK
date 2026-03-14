@@ -5,6 +5,7 @@ from fastapi import APIRouter, UploadFile, File, Form
 from ..database import get_db
 from ..cargo.agent import process_cargo, delegate_task
 from ..cargo.file_extractor import extract_text
+from ..cargo.consult import consult_and_route
 
 router = APIRouter(prefix="/api/cargo", tags=["cargo"])
 
@@ -54,6 +55,36 @@ async def manual_delegate(
         description=description,
         target_department_id=target_department_id or None,
         target_agent_id=target_agent_id or None,
+    )
+
+
+@router.post("/consult")
+async def ceo_cargo_consult(
+    file: UploadFile | None = File(None),
+    title: str = Form(...),
+    description: str = Form(""),
+    content: str = Form(""),
+):
+    """CEO+Cargo istişaresi: görevi analiz et, formatı dönüştür ve doğru agent'a ilet."""
+    filename = ""
+    file_content = content
+    file_size = len(content.encode("utf-8"))
+    file_type = ""
+
+    if file:
+        filename = file.filename or ""
+        raw = await file.read()
+        file_content = extract_text(raw, filename, file.content_type or "")
+        file_size = len(raw)
+        file_type = file.content_type or ""
+
+    return await consult_and_route(
+        title=title,
+        description=description,
+        content=file_content,
+        filename=filename,
+        file_type=file_type,
+        file_size=file_size,
     )
 
 
