@@ -154,7 +154,15 @@ async def consult_and_route(
         department_id="management",
     )
 
-    # Step 5: Cargo delivers to agent inbox
+    # Step 5: Whitelist check — prevent path traversal
+    ALLOWED_AGENTS = {
+        "indicator", "algo-bot", "school-game", "clinic", "concierge",
+        "fullstack", "prompt-engineer", "social-media", "u2algo-manager",
+        "ceo", "cargo",
+    }
+    if target_agent not in ALLOWED_AGENTS:
+        target_agent = "fullstack"
+    # Step 6: Cargo delivers to agent inbox
     inbox = WORKSPACE / target_agent / "inbox"
     inbox.mkdir(parents=True, exist_ok=True)
     ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
