@@ -1,11 +1,11 @@
 "use client";
 /**
- * COWORK.ARMY — World3DScene v7 "Silicon Valley Campus"
- * - Skill/role bazlı agent profilleri (agent-profiles.ts)
- * - Animasyon tipi: typing, analyzing, commanding, treating, serving, scanning
- * - Tüm cam duvarlar raycast kapalı — tıklama çalışıyor
- * - task_text düşünce balonunda gösteriliyor
- * - 3. şahıs kamera + Komuta Paneli Canvas dışında
+ * COWORK.ARMY — World3DScene v8
+ * - Sol panel: agent listesi, tıklayınca kamera o agent'a gider
+ * - Boştaki agent'lar CEO kulesi etrafında bekler
+ * - CEO+Cargo görev formu (sağ üst)
+ * - Kamera navigate: sol panelden tıklayınca kamera smooth geçiş
+ * - Tüm önceki özellikler korundu
  */
 import {
   Suspense, useRef, useEffect, useState, useMemo, useCallback,
@@ -53,6 +53,17 @@ const DESK_OFFSETS: [number, number, number][] = [
   [-2.2, 0, -1.5], [0.0, 0, -1.5], [2.2, 0, -1.5], [-1.1, 0, 1.2],
 ];
 
+// CEO kulesi etrafında bekleme pozisyonları (16 slot)
+const CEO_WAIT_RADIUS = 5.5;
+function getCeoWaitPos(slotIndex: number): [number, number, number] {
+  const angle = (slotIndex / 16) * Math.PI * 2;
+  return [
+    Math.sin(angle) * CEO_WAIT_RADIUS,
+    0,
+    Math.cos(angle) * CEO_WAIT_RADIUS,
+  ];
+}
+
 interface AgentRef { agentId: string; dept: string; worldPos: THREE.Vector3; }
 interface AgentStatusLocal { status: string; lines: string[]; alive: boolean; task_text?: string; }
 interface ActivityItem { id: string; text: string; color: string; time: string; icon: string; }
@@ -76,6 +87,11 @@ function Ground() {
           </mesh>
         );
       })}
+      {/* CEO kulesi bekleme halkası */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.002, 0]}>
+        <ringGeometry args={[CEO_WAIT_RADIUS - 0.3, CEO_WAIT_RADIUS + 0.3, 64]} />
+        <meshStandardMaterial color="#0e1a2e" roughness={1} transparent opacity={0.5} />
+      </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.002, 0]}>
         <ringGeometry args={[4, 4.4, 64]} />
         <meshStandardMaterial color="#0e1a2e" roughness={1} />
@@ -200,63 +216,66 @@ function Desk({ position, color, isActive }: { position: [number, number, number
 function DeptBuilding({ dept, isActive, agentCount }: { dept: string; isActive: boolean; agentCount: number }) {
   const color = DEPT_COLORS[dept] || "#ffffff";
   const pos = DEPT_POSITIONS[dept] || [0, 0, 0];
-
-  const wallMat = useMemo(() => new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color(color),
-    transparent: true,
-    opacity: isActive ? 0.16 : 0.08,
-    roughness: 0.05,
-    metalness: 0.1,
-    transmission: 0.8,
-    thickness: 0.3,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  }), [color, isActive]);
+  const wallMat = { transparent: true, opacity: isActive ? 0.18 : 0.10, depthWrite: false, side: THREE.DoubleSide };
 
   return (
     <group position={pos}>
+      {/* Zemin */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
         <planeGeometry args={[BLDG_W, BLDG_D]} />
-        <meshStandardMaterial color="#060c1a" roughness={0.9} />
+        <meshStandardMaterial color="#060c18" roughness={0.9} />
       </mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, BLDG_H, 0]}>
-        <planeGeometry args={[BLDG_W, BLDG_D]} />
-        <meshStandardMaterial color="#050a14" roughness={0.9} transparent opacity={0.5} />
+      {/* Zemin halkası */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+        <ringGeometry args={[2.8, 3.2, 32]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 0.6 : 0.15} toneMapped={false} />
       </mesh>
       {/* Cam duvarlar — raycast kapalı */}
-      <mesh position={[0, BLDG_H / 2, BLDG_D / 2]} material={wallMat} raycast={() => null}><planeGeometry args={[BLDG_W, BLDG_H]} /></mesh>
-      <mesh position={[0, BLDG_H / 2, -BLDG_D / 2]} material={wallMat} raycast={() => null}><planeGeometry args={[BLDG_W, BLDG_H]} /></mesh>
-      <mesh position={[-BLDG_W / 2, BLDG_H / 2, 0]} rotation={[0, Math.PI / 2, 0]} material={wallMat} raycast={() => null}><planeGeometry args={[BLDG_D, BLDG_H]} /></mesh>
-      <mesh position={[BLDG_W / 2, BLDG_H / 2, 0]} rotation={[0, Math.PI / 2, 0]} material={wallMat} raycast={() => null}><planeGeometry args={[BLDG_D, BLDG_H]} /></mesh>
-      {/* Köşe kolonlar */}
-      {[[-BLDG_W/2, BLDG_D/2],[BLDG_W/2, BLDG_D/2],[-BLDG_W/2,-BLDG_D/2],[BLDG_W/2,-BLDG_D/2]].map(([cx, cz], i) => (
-        <mesh key={i} position={[cx, BLDG_H / 2, cz]} raycast={() => null}>
-          <boxGeometry args={[WALL_T * 4, BLDG_H, WALL_T * 4]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 0.7 : 0.15} />
+      {[
+        { pos: [0, BLDG_H / 2, -BLDG_D / 2] as [number,number,number], rot: [0,0,0] as [number,number,number], args: [BLDG_W, BLDG_H] as [number,number] },
+        { pos: [0, BLDG_H / 2,  BLDG_D / 2] as [number,number,number], rot: [0,0,0] as [number,number,number], args: [BLDG_W, BLDG_H] as [number,number] },
+        { pos: [-BLDG_W / 2, BLDG_H / 2, 0] as [number,number,number], rot: [0, Math.PI / 2, 0] as [number,number,number], args: [BLDG_D, BLDG_H] as [number,number] },
+        { pos: [ BLDG_W / 2, BLDG_H / 2, 0] as [number,number,number], rot: [0, Math.PI / 2, 0] as [number,number,number], args: [BLDG_D, BLDG_H] as [number,number] },
+      ].map((w, i) => (
+        <mesh key={i} position={w.pos} rotation={w.rot} raycast={() => null}>
+          <planeGeometry args={w.args} />
+          <meshPhysicalMaterial color={color} {...wallMat} transmission={0.7} roughness={0.1} metalness={0.1} />
         </mesh>
       ))}
-      {/* Tavan ışık şeritleri */}
-      {[-2, 0, 2].map((x, i) => (
-        <mesh key={i} position={[x, BLDG_H - 0.06, 0]} raycast={() => null}>
-          <boxGeometry args={[0.1, 0.04, BLDG_D - 0.5]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 1.4 : 0.18} toneMapped={false} />
-        </mesh>
-      ))}
-      <DeptEquipment dept={dept} isActive={isActive} />
-      {DESK_OFFSETS.slice(0, Math.max(agentCount, 2)).map((off, i) => (
-        <Desk key={i} position={off} color={color} isActive={isActive} />
-      ))}
-      <pointLight position={[0, BLDG_H - 0.6, 0]} intensity={isActive ? 2.0 : 0.4} color={color} distance={9} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} raycast={() => null}>
-        <ringGeometry args={[BLDG_W / 2 + 0.1, BLDG_W / 2 + 0.5, 64]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 0.9 : 0.2} transparent opacity={0.75} />
+      {/* Tavan */}
+      <mesh position={[0, BLDG_H, 0]} raycast={() => null}>
+        <planeGeometry args={[BLDG_W, BLDG_D]} />
+        <meshPhysicalMaterial color={color} transparent opacity={0.08} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
+      {/* Köşe kolonlar */}
+      {[[-BLDG_W/2+0.15, -BLDG_D/2+0.15],[BLDG_W/2-0.15,-BLDG_D/2+0.15],[-BLDG_W/2+0.15,BLDG_D/2-0.15],[BLDG_W/2-0.15,BLDG_D/2-0.15]].map(([cx,cz],i) => (
+        <mesh key={i} position={[cx, BLDG_H/2, cz]}>
+          <boxGeometry args={[WALL_T*2, BLDG_H, WALL_T*2]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 0.4 : 0.1} />
+        </mesh>
+      ))}
+      {/* Tavan ışık şeridi */}
+      <mesh position={[0, BLDG_H - 0.05, 0]}>
+        <boxGeometry args={[BLDG_W - 0.3, 0.04, BLDG_D - 0.3]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 1.2 : 0.15} toneMapped={false} />
+      </mesh>
+      {/* Departman etiketi */}
       <Billboard position={[0, BLDG_H + 0.8, 0]}>
-        <Text fontSize={0.38} color={color} anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="#000">
+        <Text fontSize={0.35} color={color} anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#000">
           {DEPT_ICONS[dept] || "🏢"} {dept.toUpperCase()}
         </Text>
+        <Text fontSize={0.18} color={isActive ? "#22c55e" : "#334"} anchorX="center" anchorY="middle" position={[0, -0.42, 0]}>
+          {isActive ? `● ${agentCount} aktif` : `○ ${agentCount} idle`}
+        </Text>
       </Billboard>
-      {isActive && <Sparkles count={18} scale={[BLDG_W, BLDG_H, BLDG_D]} size={1.2} speed={0.3} color={color} opacity={0.5} />}
+      {/* Masalar */}
+      {DESK_OFFSETS.slice(0, agentCount || 1).map((off, i) => (
+        <Desk key={i} position={[off[0], 0, off[2]]} color={color} isActive={isActive} />
+      ))}
+      {/* Departman ekipmanı */}
+      <DeptEquipment dept={dept} isActive={isActive} />
+      {isActive && <pointLight position={[0, BLDG_H / 2, 0]} intensity={0.8} color={color} distance={10} />}
+      {isActive && <Sparkles count={12} scale={[BLDG_W, BLDG_H, BLDG_D]} size={1.5} speed={0.3} color={color} />}
     </group>
   );
 }
@@ -264,39 +283,39 @@ function DeptBuilding({ dept, isActive, agentCount }: { dept: string; isActive: 
 // ─── CEO Kulesi ───────────────────────────────────────────────────────────────
 function CeoTower({ isActive }: { isActive: boolean }) {
   const ringRef = useRef<THREE.Mesh>(null);
-  useFrame((_, delta) => { if (ringRef.current) ringRef.current.rotation.y += delta * 0.8; });
+  useFrame((_, delta) => { if (ringRef.current) ringRef.current.rotation.y += delta * 0.6; });
   return (
     <group position={CEO_POSITION}>
-      <mesh position={[0, 2.5, 0]} raycast={() => null}>
-        <cylinderGeometry args={[0.9, 1.2, 5.0, 16]} />
-        <meshStandardMaterial color="#0a0810" emissive={CEO_COLOR} emissiveIntensity={isActive ? 0.25 : 0.06} metalness={0.6} roughness={0.3} />
+      <mesh position={[0, 3.5, 0]}>
+        <cylinderGeometry args={[0.7, 1.1, 7.0, 16]} />
+        <meshStandardMaterial color="#0a0e18" metalness={0.8} roughness={0.2} emissive={CEO_COLOR} emissiveIntensity={isActive ? 0.12 : 0.04} />
       </mesh>
-      <mesh ref={ringRef} position={[0, 4.2, 0]} raycast={() => null}>
-        <torusGeometry args={[1.6, 0.08, 8, 32]} />
-        <meshStandardMaterial color={CEO_COLOR} emissive={CEO_COLOR} emissiveIntensity={isActive ? 1.5 : 0.3} toneMapped={false} />
+      <mesh position={[0, 7.2, 0]}>
+        <cylinderGeometry args={[0.3, 0.7, 0.6, 16]} />
+        <meshStandardMaterial color="#0a0e18" metalness={0.9} roughness={0.1} emissive={CEO_COLOR} emissiveIntensity={isActive ? 0.3 : 0.08} />
       </mesh>
-      <pointLight position={[0, 5.5, 0]} intensity={isActive ? 3.5 : 0.6} color={CEO_COLOR} distance={12} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} raycast={() => null}>
-        <ringGeometry args={[2.0, 2.5, 64]} />
-        <meshStandardMaterial color={CEO_COLOR} emissive={CEO_COLOR} emissiveIntensity={isActive ? 1.0 : 0.2} transparent opacity={0.7} />
+      <mesh ref={ringRef} position={[0, 4.5, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1.8, 0.06, 8, 32]} />
+        <meshStandardMaterial color={CEO_COLOR} emissive={CEO_COLOR} emissiveIntensity={isActive ? 2 : 0.4} toneMapped={false} />
       </mesh>
-      {isActive && <Sparkles count={25} scale={[4, 6, 4]} size={1.5} speed={0.4} color={CEO_COLOR} opacity={0.6} />}
-      <Billboard position={[0, 6.5, 0]}>
+      <Billboard position={[0, 8.2, 0]}>
         <Text fontSize={0.4} color={CEO_COLOR} anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="#000">
           👑 CEO HQ
         </Text>
       </Billboard>
+      {isActive && <Sparkles count={20} scale={[4, 8, 4]} size={2} speed={0.5} color={CEO_COLOR} position={[0, 3.5, 0]} />}
+      {isActive && <pointLight position={[0, 7, 0]} intensity={2} color={CEO_COLOR} distance={12} />}
     </group>
   );
 }
 
 // ─── Agent Maskotu ────────────────────────────────────────────────────────────
-interface MascotProps {
+function AgentMascot3D({ agentId, dept, index, isWorking, taskText, isSelected, onSelect, waitSlot }: {
   agentId: string; dept: string; index: number; isWorking: boolean;
-  taskText?: string; isSelected: boolean; onSelect: (ref: AgentRef) => void;
-}
-
-function AgentMascot3D({ agentId, dept, index, isWorking, taskText, isSelected, onSelect }: MascotProps) {
+  taskText?: string; isSelected: boolean;
+  onSelect: (ref: AgentRef) => void;
+  waitSlot: number; // CEO etrafında bekleme slotu
+}) {
   const profile = useMemo(() => getAgentProfile(agentId), [agentId]);
   const { scene } = useGLTF(profile.glbModel);
   const cloned = useMemo(() => {
@@ -323,9 +342,11 @@ function AgentMascot3D({ agentId, dept, index, isWorking, taskText, isSelected, 
   const deskX = deptPos[0] + deskOff[0];
   const deskY = 0.75;
   const deskZ = deptPos[2] + deskOff[2];
-  const idleX = dept === "management" ? 0 : deptPos[0] + Math.sin(index * 1.4) * 1.8;
-  const idleY = dept === "management" ? 5.2 : 0;
-  const idleZ = dept === "management" ? 0 : deptPos[2] + Math.cos(index * 1.4) * 1.8;
+
+  // Boştaki pozisyon: CEO kulesi etrafında
+  const [idleX, idleY, idleZ] = dept === "management"
+    ? [0, 5.2, 0]
+    : getCeoWaitPos(waitSlot);
 
   useEffect(() => {
     currentPos.current = [idleX, idleY, idleZ];
@@ -374,9 +395,19 @@ function AgentMascot3D({ agentId, dept, index, isWorking, taskText, isSelected, 
       else if (anim === "commanding") { groupRef.current.rotation.y = Math.sin(t * 0.5) * 0.1; groupRef.current.position.y = deskY + Math.sin(t * 1.5) * 0.05; }
       else { groupRef.current.position.y = deskY + Math.abs(Math.sin(t * 2.5 + index)) * 0.05; groupRef.current.rotation.y = Math.PI; }
     } else {
-      groupRef.current.position.set(idleX, idleY + Math.sin(t * 0.8 + index) * 0.04, idleZ);
-      groupRef.current.rotation.y = Math.PI + Math.sin(t * 0.5 + index) * 0.25;
-      groupRef.current.rotation.x = 0;
+      // Boşta: CEO kulesi etrafında yavaş dön
+      if (dept !== "management") {
+        const angle = (waitSlot / 16) * Math.PI * 2 + t * 0.15;
+        groupRef.current.position.set(
+          Math.sin(angle) * CEO_WAIT_RADIUS,
+          Math.sin(t * 0.6 + waitSlot) * 0.08,
+          Math.cos(angle) * CEO_WAIT_RADIUS,
+        );
+        groupRef.current.rotation.y = angle + Math.PI;
+      } else {
+        groupRef.current.position.set(idleX, idleY + Math.sin(t * 0.8) * 0.05, idleZ);
+        groupRef.current.rotation.y = Math.sin(t * 0.5) * 0.2;
+      }
     }
   });
 
@@ -424,7 +455,7 @@ function AgentMascot3D({ agentId, dept, index, isWorking, taskText, isSelected, 
             {profile.roleIcon} {profile.name}
           </Text>
           <Text fontSize={0.11} color={isWorking ? "#88ff88" : "#445566"} anchorX="center" anchorY="middle" position={[0, -0.22, 0]}>
-            {profile.roleLabel}
+            {isWorking ? "● Çalışıyor" : "○ Bekliyor"}
           </Text>
           {isSelected && profile.skills.slice(0, 3).map((skill, i) => (
             <Text key={i} fontSize={0.09} color={color} anchorX="center" anchorY="middle" position={[0, -0.44 - i * 0.16, 0]} outlineWidth={0.01} outlineColor="#000">
@@ -462,6 +493,24 @@ function ThirdPersonCamera({ target }: { target: THREE.Vector3 }) {
     if (first.current) { camera.position.copy(desired); first.current = false; }
     else camera.position.lerp(desired, 0.06);
     camera.lookAt(target.clone().add(new THREE.Vector3(0, 0.8, 0)));
+  });
+  return null;
+}
+
+// ─── Kamera Navigate (sol panelden tıklama) ──────────────────────────────────
+function CameraNavigate({ target }: { target: THREE.Vector3 | null }) {
+  const { camera } = useThree();
+  const prevTarget = useRef<THREE.Vector3 | null>(null);
+  useFrame(() => {
+    if (!target) return;
+    if (!prevTarget.current || !prevTarget.current.equals(target)) {
+      prevTarget.current = target.clone();
+    }
+    const offset = new THREE.Vector3(0, 8, 12);
+    const desired = target.clone().add(offset);
+    camera.position.lerp(desired, 0.04);
+    const lookTarget = target.clone().add(new THREE.Vector3(0, 1, 0));
+    camera.lookAt(lookTarget);
   });
   return null;
 }
@@ -533,7 +582,7 @@ function CollabBeam({ agentAPos, agentBPos, color }: { agentAPos: THREE.Vector3;
 // ─── Aktivite Feed HUD ────────────────────────────────────────────────────────
 function ActivityFeedHUD({ items, activeCount, totalAgents }: { items: ActivityItem[]; activeCount: number; totalAgents: number }) {
   return (
-    <div style={{ position: "absolute", top: 14, left: 14, zIndex: 10, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none" }}>
+    <div style={{ position: "absolute", top: 14, right: 14, zIndex: 10, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none", maxWidth: 260 }}>
       <div style={{ background: "rgba(4,7,16,0.85)", border: "1px solid #0e1a2e", borderRadius: 8, padding: "5px 12px", display: "flex", alignItems: "center", gap: 10, fontFamily: "monospace" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", animation: activeCount > 0 ? "pulse 1.5s infinite" : "none" }} />
@@ -550,6 +599,148 @@ function ActivityFeedHUD({ items, activeCount, totalAgents }: { items: ActivityI
           <span style={{ fontSize: 8, color: "#334" }}>{item.time}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─── Sol Panel: Agent Listesi ─────────────────────────────────────────────────
+function AgentSidePanel({
+  worldModels, statuses, selectedId, onAgentClick,
+}: {
+  worldModels: AgentWorldModel[];
+  statuses: Record<string, AgentStatusLocal>;
+  selectedId: string | null;
+  onAgentClick: (agentId: string, dept: string) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  const grouped = useMemo(() => {
+    const map: Record<string, AgentWorldModel[]> = {};
+    worldModels.forEach(m => {
+      const dept = m.department_id || "unknown";
+      if (!map[dept]) map[dept] = [];
+      map[dept].push(m);
+    });
+    return map;
+  }, [worldModels]);
+
+  return (
+    <div style={{
+      position: "absolute", top: 0, left: 0, bottom: 0, zIndex: 15,
+      width: collapsed ? 36 : 200,
+      background: "rgba(4,7,16,0.92)", borderRight: "1px solid #0e1a2e",
+      display: "flex", flexDirection: "column", transition: "width 0.2s ease",
+      fontFamily: "monospace", overflowY: "auto",
+    }}>
+      {/* Başlık */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 10px 6px", borderBottom: "1px solid #0e1a2e", flexShrink: 0 }}>
+        {!collapsed && <span style={{ fontSize: 10, color: "#ffd700", fontWeight: 700, letterSpacing: 1 }}>AGENTS</span>}
+        <button onClick={() => setCollapsed(c => !c)} style={{ background: "none", border: "none", color: "#334", cursor: "pointer", fontSize: 14, padding: 0, marginLeft: collapsed ? 4 : 0 }}>
+          {collapsed ? "›" : "‹"}
+        </button>
+      </div>
+      {!collapsed && (
+        <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
+          {/* CEO önce */}
+          {worldModels.filter(m => m.agent_id === "ceo").map(m => {
+            const st = statuses[m.agent_id];
+            const isActive = !!(st?.alive || ["working","thinking","running"].includes(st?.status || ""));
+            const isSelected = selectedId === m.agent_id;
+            return (
+              <button key={m.agent_id} onClick={() => onAgentClick(m.agent_id, m.department_id || "management")}
+                style={{ width: "100%", textAlign: "left", background: isSelected ? "rgba(255,215,0,0.12)" : "none", border: "none", borderLeft: isSelected ? "2px solid #ffd700" : "2px solid transparent", padding: "6px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 7 }}>
+                <span style={{ fontSize: 14 }}>👑</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, color: "#ffd700", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>CEO</div>
+                  <div style={{ fontSize: 8, color: isActive ? "#22c55e" : "#334" }}>{isActive ? "● Aktif" : "○ Bekliyor"}</div>
+                </div>
+              </button>
+            );
+          })}
+          <div style={{ height: 1, background: "#0e1a2e", margin: "4px 0" }} />
+          {/* Departmanlar */}
+          {Object.entries(grouped).filter(([d]) => d !== "management").map(([dept, agents]) => (
+            <div key={dept}>
+              <div style={{ padding: "4px 10px", fontSize: 8, color: DEPT_COLORS[dept] || "#334", letterSpacing: 1, fontWeight: 700, textTransform: "uppercase" }}>
+                {DEPT_ICONS[dept]} {dept}
+              </div>
+              {agents.map(m => {
+                const st = statuses[m.agent_id];
+                const isActive = !!(st?.alive || ["working","thinking","coding","searching","running"].includes(st?.status || ""));
+                const isSelected = selectedId === m.agent_id;
+                const color = DEPT_COLORS[dept] || "#667";
+                return (
+                  <button key={m.agent_id} onClick={() => onAgentClick(m.agent_id, dept)}
+                    style={{ width: "100%", textAlign: "left", background: isSelected ? `${color}18` : "none", border: "none", borderLeft: isSelected ? `2px solid ${color}` : "2px solid transparent", padding: "5px 10px 5px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ width: 6, height: 6, borderRadius: "50%", background: isActive ? "#22c55e" : "#1a2030", flexShrink: 0, animation: isActive ? "pulse 1.5s infinite" : "none" }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 9, color: isSelected ? color : "#556", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.agent_id.replace(/_/g, " ")}</div>
+                      {isActive && st?.task_text && (
+                        <div style={{ fontSize: 7, color: "#334", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st.task_text.slice(0, 22)}...</div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── CEO+Cargo Görev Formu ────────────────────────────────────────────────────
+function CeoCargoTaskForm({ onClose }: { onClose: () => void }) {
+  const [title, setTitle] = useState("");
+  const [desc, setDesc] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ target_department_id?: string; target_agent_id?: string; confidence?: number; reasoning?: string } | null>(null);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async () => {
+    if (!title.trim()) return;
+    setLoading(true); setError(""); setResult(null);
+    try {
+      const API_BASE = process.env.NEXT_PUBLIC_COWORK_API_URL || "";
+      const fd = new FormData();
+      fd.append("title", title);
+      fd.append("description", desc);
+      const r = await fetch(`${API_BASE}/cowork-api/cargo/consult`, { method: "POST", body: fd });
+      if (r.ok) {
+        const data = await r.json();
+        setResult(data);
+      } else {
+        setError("Görev gönderilemedi.");
+      }
+    } catch {
+      setError("Bağlantı hatası.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", zIndex: 25, background: "rgba(4,7,16,0.97)", border: "1px solid #ffd70040", borderRadius: 12, padding: 16, fontFamily: "monospace", width: 320, boxShadow: "0 0 30px #ffd70020" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <span style={{ fontSize: 11, color: "#ffd700", fontWeight: 700 }}>👑 CEO + 📦 Cargo — Görev Gönder</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#334", cursor: "pointer", fontSize: 14 }}>✕</button>
+      </div>
+      <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Görev başlığı..." style={{ width: "100%", background: "#0a1020", border: "1px solid #1a2a4a", borderRadius: 6, padding: "6px 10px", color: "#aab", fontSize: 11, fontFamily: "monospace", marginBottom: 8, boxSizing: "border-box" }} />
+      <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="Açıklama (opsiyonel)..." rows={3} style={{ width: "100%", background: "#0a1020", border: "1px solid #1a2a4a", borderRadius: 6, padding: "6px 10px", color: "#aab", fontSize: 10, fontFamily: "monospace", resize: "none", marginBottom: 8, boxSizing: "border-box" }} />
+      <button onClick={handleSubmit} disabled={loading || !title.trim()} style={{ width: "100%", padding: "7px 0", background: loading ? "#0a1020" : "#ffd70020", border: "1px solid #ffd70040", borderRadius: 8, color: "#ffd700", fontSize: 11, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", fontFamily: "monospace" }}>
+        {loading ? "⏳ CEO+Cargo istişare ediyor..." : "▶ Gönder"}
+      </button>
+      {error && <div style={{ marginTop: 8, fontSize: 10, color: "#ff4444" }}>{error}</div>}
+      {result && (
+        <div style={{ marginTop: 10, padding: "8px 10px", background: "#0a1020", borderRadius: 8, border: "1px solid #22c55e40" }}>
+          <div style={{ fontSize: 10, color: "#22c55e", fontWeight: 700 }}>✓ Görev yönlendirildi</div>
+          <div style={{ fontSize: 9, color: "#556", marginTop: 4 }}>Departman: <span style={{ color: DEPT_COLORS[result.target_department_id || ""] || "#aab" }}>{result.target_department_id}</span></div>
+          <div style={{ fontSize: 9, color: "#556" }}>Agent: <span style={{ color: "#aab" }}>{result.target_agent_id}</span></div>
+          <div style={{ fontSize: 9, color: "#556" }}>Güven: <span style={{ color: "#ffd700" }}>{result.confidence}%</span></div>
+          {result.reasoning && <div style={{ fontSize: 8, color: "#334", marginTop: 4, lineHeight: 1.4 }}>{result.reasoning.slice(0, 100)}</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -583,12 +774,13 @@ function Loader() {
 }
 
 // ─── Scene ────────────────────────────────────────────────────────────────────
-function Scene({ events, worldModels, selected, onSelect, statuses }: {
+function Scene({ events, worldModels, selected, onSelect, statuses, navigateTo }: {
   events: WorldEvent[];
   worldModels: AgentWorldModel[];
   selected: AgentRef | null;
   onSelect: (ref: AgentRef) => void;
   statuses: Record<string, AgentStatusLocal>;
+  navigateTo: THREE.Vector3 | null;
 }) {
   const [beams, setBeams] = useState<{ id: string; from: string; to: string; color: string }[]>([]);
   const [drones, setDrones] = useState<{ id: string; from: string; to: string; title: string }[]>([]);
@@ -613,6 +805,16 @@ function Scene({ events, worldModels, selected, onSelect, statuses }: {
       const dept = m.department_id || "unknown";
       if (!map[dept]) map[dept] = [];
       map[dept].push(m);
+    });
+    return map;
+  }, [worldModels]);
+
+  // Tüm boştaki agent'lar için wait slot ataması
+  const waitSlotMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    let slot = 0;
+    worldModels.filter(m => m.agent_id !== "ceo").forEach(m => {
+      map[m.agent_id] = slot++;
     });
     return map;
   }, [worldModels]);
@@ -647,7 +849,7 @@ function Scene({ events, worldModels, selected, onSelect, statuses }: {
       {ceoModel && (
         <AgentMascot3D key="ceo" agentId="ceo" dept="management" index={0} isWorking={isCeoActive}
           taskText={ceoSt?.task_text || ceoSt?.lines?.[ceoSt.lines.length - 1]}
-          isSelected={selected?.agentId === "ceo"} onSelect={onSelect} />
+          isSelected={selected?.agentId === "ceo"} onSelect={onSelect} waitSlot={0} />
       )}
       {Object.entries(agentsByDept).map(([dept, agents]) =>
         agents.map((m, i) => {
@@ -656,7 +858,8 @@ function Scene({ events, worldModels, selected, onSelect, statuses }: {
           return (
             <AgentMascot3D key={m.agent_id} agentId={m.agent_id} dept={dept} index={i} isWorking={isWorking}
               taskText={st?.task_text || st?.lines?.[st.lines.length - 1]}
-              isSelected={selected?.agentId === m.agent_id} onSelect={onSelect} />
+              isSelected={selected?.agentId === m.agent_id} onSelect={onSelect}
+              waitSlot={waitSlotMap[m.agent_id] ?? i} />
           );
         })
       )}
@@ -667,7 +870,12 @@ function Scene({ events, worldModels, selected, onSelect, statuses }: {
         const posB = DEPT_POSITIONS[pair.b.department_id || "trade"] || [0, 0, 0];
         return <CollabBeam key={i} agentAPos={new THREE.Vector3(posA[0], 1.2, posA[2])} agentBPos={new THREE.Vector3(posB[0], 1.2, posB[2])} color={DEPT_COLORS[pair.a.department_id || "trade"] || "#fff"} />;
       })}
-      {selected ? <ThirdPersonCamera target={selected.worldPos} /> : <OrbitControls makeDefault minDistance={4} maxDistance={60} maxPolarAngle={Math.PI / 2.1} target={[0, 1, 0]} />}
+      {selected
+        ? <ThirdPersonCamera target={selected.worldPos} />
+        : navigateTo
+          ? <><OrbitControls makeDefault minDistance={4} maxDistance={60} maxPolarAngle={Math.PI / 2.1} /><CameraNavigate target={navigateTo} /></>
+          : <OrbitControls makeDefault minDistance={4} maxDistance={60} maxPolarAngle={Math.PI / 2.1} target={[0, 1, 0]} />
+      }
     </>
   );
 }
@@ -678,9 +886,25 @@ export default function World3DScene({ events, worldModels }: { events: WorldEve
   const [panelOpen, setPanelOpen] = useState(false);
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
   const [statuses, setStatuses] = useState<Record<string, AgentStatusLocal>>({});
+  const [showTaskForm, setShowTaskForm] = useState(false);
+  const [navigateTo, setNavigateTo] = useState<THREE.Vector3 | null>(null);
+  const navigateTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleSelect = useCallback((ref: AgentRef) => { setSelected(ref); setPanelOpen(true); }, []);
+  const handleSelect = useCallback((ref: AgentRef) => { setSelected(ref); setPanelOpen(true); setNavigateTo(null); }, []);
   const handleExit = useCallback(() => { setSelected(null); setPanelOpen(false); }, []);
+
+  // Sol panelden agent'a tıklayınca kamera o agent'ın pozisyonuna gider
+  const handleSidePanelClick = useCallback((agentId: string, dept: string) => {
+    // Önce 3. şahıs kamerayı kapat
+    setSelected(null); setPanelOpen(false);
+    // Hedef pozisyonu hesapla
+    const deptPos = dept === "management" ? CEO_POSITION : (DEPT_POSITIONS[dept] || [0, 0, 0]);
+    const target = new THREE.Vector3(deptPos[0], 1, deptPos[2]);
+    setNavigateTo(target);
+    // 3 saniye sonra navigate'i kapat (OrbitControls devralır)
+    if (navigateTimeout.current) clearTimeout(navigateTimeout.current);
+    navigateTimeout.current = setTimeout(() => setNavigateTo(null), 3000);
+  }, []);
 
   useEffect(() => {
     const API_BASE = process.env.NEXT_PUBLIC_COWORK_API_URL || "";
@@ -708,18 +932,26 @@ export default function World3DScene({ events, worldModels }: { events: WorldEve
 
   return (
     <div style={{ width: "100%", height: "100%", position: "relative", background: "#040710" }}>
+      {/* Sol panel */}
+      <AgentSidePanel
+        worldModels={worldModels}
+        statuses={statuses}
+        selectedId={selected?.agentId || null}
+        onAgentClick={handleSidePanelClick}
+      />
+      {/* Sağ üst aktivite feed */}
       <ActivityFeedHUD items={activityItems} activeCount={activeCount} totalAgents={worldModels.length} />
-      {!selected && (
-        <div style={{ position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", background: "rgba(4,7,16,0.75)", border: "1px solid #1a2a4a", borderRadius: 8, padding: "5px 18px", fontFamily: "monospace", fontSize: 11, color: "#334", zIndex: 10, pointerEvents: "none", whiteSpace: "nowrap" }}>
-          Agent'a tıkla → 3. şahıs kamera + Komuta Paneli
-        </div>
-      )}
+      {/* CEO+Cargo görev butonu */}
+      <button onClick={() => setShowTaskForm(v => !v)} style={{ position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", zIndex: 20, background: "rgba(4,7,16,0.9)", border: "1px solid #ffd70040", borderRadius: 8, padding: "6px 18px", fontFamily: "monospace", fontSize: 11, color: "#ffd700", cursor: "pointer", fontWeight: 700 }}>
+        👑 + 📦 Görev Gönder
+      </button>
+      {showTaskForm && <CeoCargoTaskForm onClose={() => setShowTaskForm(false)} />}
       {selected && <CameraHUD agent={selected} onExit={handleExit} />}
       {selected && panelOpen && <AgentCommandPanel agentId={selected.agentId} dept={selected.dept} onClose={handleExit} />}
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}} @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <Canvas shadows camera={{ position: [0, 24, 30], fov: 44 }} gl={{ antialias: true, alpha: false }} style={{ background: "#040710" }}>
         <Suspense fallback={<Loader />}>
-          <Scene events={events} worldModels={worldModels} selected={selected} onSelect={handleSelect} statuses={statuses} />
+          <Scene events={events} worldModels={worldModels} selected={selected} onSelect={handleSelect} statuses={statuses} navigateTo={navigateTo} />
         </Suspense>
       </Canvas>
     </div>
