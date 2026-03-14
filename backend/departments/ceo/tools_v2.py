@@ -110,9 +110,8 @@ async def brainstorm_improvements(dept: str, context: str) -> list:
 
     if api_key:
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
+            from google import genai as google_genai
+            client_genai = google_genai.Client(api_key=api_key)
             prompt = (
                 f"Sen COWORK.ARMY sisteminin CEO'susun. {dept.upper()} departmani icin stratejik iyilestirme onerileri uretiyorsun.\n\n"
                 f"Departman: {dept}\n"
@@ -123,7 +122,10 @@ async def brainstorm_improvements(dept: str, context: str) -> list:
                 "JSON formatinda yanit ver (sadece JSON):\n"
                 '[{"description": "gorev", "department": "' + dept + '", "priority": "high", "agent": "agent_adi"}]'
             )
-            response = model.generate_content(prompt)
+            response = client_genai.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
             text = response.text.strip()
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0].strip()
