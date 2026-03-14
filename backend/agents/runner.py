@@ -23,7 +23,7 @@ from ..departments.bots.tools import BOTS_TOOLS_IMPL, BOTS_TOOL_DEFINITIONS
 from ..departments.hotel.tools import HOTEL_TOOLS_IMPL, HOTEL_TOOL_DEFINITIONS
 from ..departments.medical.tools import MEDICAL_TOOLS_IMPL, MEDICAL_TOOL_DEFINITIONS
 from ..departments.software.tools import SOFTWARE_TOOLS_IMPL, SOFTWARE_TOOL_DEFINITIONS
-from ..departments.ceo.tools import CEO_TOOLS_IMPL, CEO_TOOL_DEFINITIONS
+from ..departments.ceo.tools_v2 import CEO_V2_TOOLS_IMPL, CEO_V2_TOOL_DEFINITIONS
 
 # Merge all department tool definitions into the global tool registry
 ALL_TOOL_DEFS = (
@@ -33,7 +33,7 @@ ALL_TOOL_DEFS = (
     + HOTEL_TOOL_DEFINITIONS
     + MEDICAL_TOOL_DEFINITIONS
     + SOFTWARE_TOOL_DEFINITIONS
-    + CEO_TOOL_DEFINITIONS
+    + CEO_V2_TOOL_DEFINITIONS
 )
 
 # Combined tool implementation registry (department-specific tools)
@@ -43,7 +43,7 @@ ALL_TOOLS_IMPL.update(BOTS_TOOLS_IMPL)
 ALL_TOOLS_IMPL.update(HOTEL_TOOLS_IMPL)
 ALL_TOOLS_IMPL.update(MEDICAL_TOOLS_IMPL)
 ALL_TOOLS_IMPL.update(SOFTWARE_TOOLS_IMPL)
-ALL_TOOLS_IMPL.update(CEO_TOOLS_IMPL)
+ALL_TOOLS_IMPL.update(CEO_V2_TOOLS_IMPL)
 
 MAX_TOOL_ROUNDS = 15  # Max tool-calling iterations per task
 
@@ -54,7 +54,7 @@ _DEPT_TOOL_DEFS: dict[str, list] = {
     "hotel": HOTEL_TOOL_DEFINITIONS,
     "medical": MEDICAL_TOOL_DEFINITIONS,
     "software": SOFTWARE_TOOL_DEFINITIONS,
-    "management": CEO_TOOL_DEFINITIONS,
+    "management": ALL_TOOL_DEFS, # CEO has access to all tools
 }
 
 
