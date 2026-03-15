@@ -106,6 +106,7 @@ from .api.settings import router as settings_router
 from .api.websocket import router as ws_router
 from .api.usage import router as usage_router
 from .api.auth import router as auth_router
+from .api.onboarding import router as onboarding_router
 
 app.include_router(dept_router)
 app.include_router(agent_router)
@@ -116,6 +117,7 @@ app.include_router(settings_router)
 app.include_router(ws_router)
 app.include_router(usage_router)
 app.include_router(auth_router)
+app.include_router(onboarding_router)
 
 
 if __name__ == "__main__":
