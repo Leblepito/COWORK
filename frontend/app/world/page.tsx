@@ -76,7 +76,7 @@ export default function WorldPage() {
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="text-center px-6 py-4 rounded-xl border" style={{ background: "#0c0d18cc", borderColor: "#1a1f35" }}>
                 <p className="text-[12px] md:text-[13px] font-mono text-gray-400">Backend bağlantısı bekleniyor...</p>
-                <p className="text-[10px] md:text-[11px] font-mono text-gray-600 mt-1">ws://localhost:8888/ws/events</p>
+                <p className="text-[10px] md:text-[11px] font-mono text-gray-600 mt-1">Sunucuya baglaniliyor...</p>
               </div>
             </div>
           )}

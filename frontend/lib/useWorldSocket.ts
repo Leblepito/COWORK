@@ -50,9 +50,8 @@ function getWsUrl(): string {
     return "ws://localhost:8888/ws/events";
   }
 
-  // 4. Production fallback — hardcoded Railway backend domain
-  //    Bu URL Railway'deki backend servisinin public domain'i
-  return "wss://backend-production-3ddc.up.railway.app/ws/events";
+  // 4. Production fallback — use backend public domain
+  return "wss://backend-production-50c9a.up.railway.app/ws/events";
 }
 
 export function useWorldSocket(): WorldState {
