@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, delete, update, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from .models import Department, Agent, Task, Event, CargoLog, LlmUsage, TaskHistory
+from .models import Department, Agent, Task, Event, CargoLog, LlmUsage, TaskHistory, User
 
 
 class Database:
@@ -428,3 +428,48 @@ class Database:
             result = await s.execute(delete(Event).where(Event.timestamp < cutoff))
             await s.commit()
             return result.rowcount
+
+    # ── User Auth ──
+
+    async def get_user_by_email(self, email: str) -> dict | None:
+        async with self._sf() as s:
+            result = await s.execute(select(User).where(User.email == email))
+            user = result.scalar_one_or_none()
+            if user:
+                return {
+                    "id": str(user.id), "email": user.email, "name": user.name,
+                    "company": user.company or "", "avatar": user.avatar or "",
+                    "plan": user.plan, "max_agents": user.max_agents,
+                    "is_active": user.is_active,
+                    "created_at": user.created_at.isoformat() if user.created_at else "",
+                    "hashed_password": user.hashed_password,
+                }
+            return None
+
+    async def create_user(self, email: str, hashed_password: str, name: str, company: str = "") -> dict:
+        async with self._sf() as s:
+            user = User(email=email, hashed_password=hashed_password, name=name, company=company)
+            s.add(user)
+            await s.commit()
+            await s.refresh(user)
+            return {
+                "id": str(user.id), "email": user.email, "name": user.name,
+                "company": user.company or "", "avatar": user.avatar or "",
+                "plan": user.plan, "max_agents": user.max_agents,
+                "is_active": user.is_active,
+                "created_at": user.created_at.isoformat() if user.created_at else "",
+            }
+
+    async def get_user_by_id(self, user_id: int) -> dict | None:
+        async with self._sf() as s:
+            result = await s.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user:
+                return {
+                    "id": str(user.id), "email": user.email, "name": user.name,
+                    "company": user.company or "", "avatar": user.avatar or "",
+                    "plan": user.plan, "max_agents": user.max_agents,
+                    "is_active": user.is_active,
+                    "created_at": user.created_at.isoformat() if user.created_at else "",
+                }
+            return None
