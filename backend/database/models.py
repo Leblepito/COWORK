@@ -17,6 +17,29 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    email: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(200), default="")
+    name: Mapped[str] = mapped_column(String(100), default="")
+    company: Mapped[str] = mapped_column(String(200), default="")
+    avatar: Mapped[str] = mapped_column(String(10), default="👤")
+    plan: Mapped[str] = mapped_column(String(100), default="free")
+    max_agents: Mapped[int] = mapped_column(Integer, default=5)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Social login provider (google, telegram, facebook, or empty for email)
+    auth_provider: Mapped[str] = mapped_column(String(30), default="")
+    auth_provider_id: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Department(Base):
     __tablename__ = "departments"
 

@@ -94,6 +94,7 @@ from .api.cargo import router as cargo_router
 from .api.autonomous import router as auto_router
 from .api.settings import router as settings_router
 from .api.websocket import router as ws_router
+from .api.auth import router as auth_router
 
 app.include_router(dept_router)
 app.include_router(agent_router)
@@ -102,6 +103,7 @@ app.include_router(cargo_router)
 app.include_router(auto_router)
 app.include_router(settings_router)
 app.include_router(ws_router)
+app.include_router(auth_router)
 
 
 if __name__ == "__main__":

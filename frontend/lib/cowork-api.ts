@@ -110,6 +110,22 @@ export async function loginUser(email: string, password: string): Promise<AuthRe
 export const getCurrentUser = () => coworkFetch<CoworkUser>("/auth/me");
 export function logoutUser() { setAuthToken(null); }
 
+export async function socialLogin(provider: string, providerId: string, email: string, name: string): Promise<AuthResponse> {
+  const fd = new FormData();
+  fd.append("provider", provider);
+  fd.append("provider_id", providerId);
+  fd.append("email", email);
+  fd.append("name", name);
+  const res = await fetch(`${BASE}/auth/social-login`, { method: "POST", body: fd });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ detail: "Sosyal giris hatasi" }));
+    throw new Error(data.detail || `API error ${res.status}`);
+  }
+  const data = await res.json() as AuthResponse;
+  setAuthToken(data.token);
+  return data;
+}
+
 // ── Department Endpoints ──
 
 export const getDepartments = () => coworkFetch<Department[]>("/departments");

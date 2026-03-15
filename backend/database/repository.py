@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, delete, update, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from .models import Department, Agent, Task, Event, CargoLog
+from .models import Department, Agent, Task, Event, CargoLog, User
 
 
 class Database:
@@ -198,6 +198,65 @@ class Database:
                 select(CargoLog).order_by(CargoLog.id.desc()).limit(limit)
             )
             return [self._cargo_to_dict(c) for c in result.scalars().all()]
+
+    # ── Users ──
+
+    async def create_user(self, user_id: str, email: str, password_hash: str,
+                          name: str, company: str = "", auth_provider: str = "",
+                          auth_provider_id: str = "") -> dict:
+        async with self._sf() as s:
+            user = User(
+                id=user_id, email=email, password_hash=password_hash,
+                name=name, company=company, auth_provider=auth_provider,
+                auth_provider_id=auth_provider_id,
+            )
+            s.add(user)
+            await s.commit()
+        return await self.get_user(user_id)
+
+    async def get_user(self, user_id: str) -> dict | None:
+        async with self._sf() as s:
+            result = await s.execute(select(User).where(User.id == user_id))
+            u = result.scalar_one_or_none()
+            return self._user_to_dict(u) if u else None
+
+    async def get_user_by_email(self, email: str) -> dict | None:
+        async with self._sf() as s:
+            result = await s.execute(select(User).where(User.email == email))
+            u = result.scalar_one_or_none()
+            return self._user_to_dict(u) if u else None
+
+    async def get_user_by_provider(self, provider: str, provider_id: str) -> dict | None:
+        async with self._sf() as s:
+            result = await s.execute(
+                select(User).where(User.auth_provider == provider, User.auth_provider_id == provider_id)
+            )
+            u = result.scalar_one_or_none()
+            return self._user_to_dict(u) if u else None
+
+    async def get_user_password_hash(self, email: str) -> str | None:
+        async with self._sf() as s:
+            result = await s.execute(
+                select(User.password_hash).where(User.email == email)
+            )
+            row = result.scalar_one_or_none()
+            return row if row else None
+
+    async def update_user(self, user_id: str, **kwargs):
+        async with self._sf() as s:
+            kwargs["updated_at"] = datetime.now(timezone.utc)
+            await s.execute(update(User).where(User.id == user_id).values(**kwargs))
+            await s.commit()
+
+    @staticmethod
+    def _user_to_dict(u: User) -> dict:
+        return {
+            "id": u.id, "email": u.email, "name": u.name,
+            "company": u.company, "avatar": u.avatar,
+            "plan": u.plan, "max_agents": u.max_agents,
+            "is_active": u.is_active, "auth_provider": u.auth_provider,
+            "created_at": u.created_at.isoformat() if u.created_at else "",
+        }
 
     # ── Seed ──
 

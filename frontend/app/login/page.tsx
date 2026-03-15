@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { registerUser, loginUser, getAuthToken } from "@/lib/cowork-api";
+import { registerUser, loginUser, socialLogin, getAuthToken } from "@/lib/cowork-api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,6 +14,22 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => { if (getAuthToken()) router.replace("/"); }, [router]);
+
+  const handleSocialLogin = async (provider: "google" | "telegram" | "facebook") => {
+    setError(""); setLoading(true);
+    try {
+      // For production: integrate real OAuth flows.
+      // Demo mode: generate a placeholder social ID for testing.
+      const providerId = `${provider}_${Date.now()}`;
+      const demoEmail = `demo_${provider}@cowork.army`;
+      const demoName = provider === "google" ? "Google User" : provider === "telegram" ? "Telegram User" : "Facebook User";
+      const result = await socialLogin(provider, providerId, demoEmail, demoName);
+      router.replace(result.user.plan === "free" ? "/onboarding" : "/");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Sosyal giris hatasi");
+    }
+    setLoading(false);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,6 +91,30 @@ export default function LoginPage() {
               {loading ? "..." : mode === "login" ? "GIRIS YAP" : "HESAP OLUSTUR"}
             </button>
           </form>
+
+          {/* Social Login Buttons */}
+          <div className="mt-5 pt-4 border-t border-[#1a1f35]">
+            <div className="text-[9px] text-gray-500 text-center mb-3 font-mono tracking-wider">VEYA SOSYAL HESAPLA DEVAM ET</div>
+            <div className="flex flex-col gap-2">
+              <button onClick={() => handleSocialLogin("google")}
+                className="w-full flex items-center justify-center gap-2.5 py-3 rounded-lg bg-[#060710] border border-[#1e293b] hover:border-red-500/40 hover:bg-red-500/5 transition-all group">
+                <svg className="w-4 h-4" viewBox="0 0 24 24"><path fill="#EA4335" d="M5.27 9.76A7.08 7.08 0 0 1 12 5.48c1.68 0 3.19.6 4.38 1.57l3.27-3.27A11.97 11.97 0 0 0 12 .5 12 12 0 0 0 1.24 6.65l4.03 3.11Z"/><path fill="#34A853" d="M16.04 18.01A7.4 7.4 0 0 1 12 19.26 7.08 7.08 0 0 1 5.27 14l-4.03 3.11A12 12 0 0 0 12 23.5c3.07 0 5.86-1.15 7.97-3.02l-3.93-2.47Z"/><path fill="#4A90D9" d="M19.97 20.48A11.82 11.82 0 0 0 23.5 12c0-.77-.08-1.57-.22-2.33H12v4.66h6.47a5.65 5.65 0 0 1-2.43 3.68l3.93 2.47Z"/><path fill="#FBBC05" d="M5.27 14a7.1 7.1 0 0 1 0-4.24L1.24 6.65A12 12 0 0 0 0 12c0 1.93.45 3.76 1.24 5.35l4.03-3.35Z"/></svg>
+                <span className="text-[11px] font-bold text-gray-400 group-hover:text-red-400 font-mono tracking-wider">GMAIL</span>
+              </button>
+              <div className="flex gap-2">
+                <button onClick={() => handleSocialLogin("telegram")}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg bg-[#060710] border border-[#1e293b] hover:border-blue-500/40 hover:bg-blue-500/5 transition-all group">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24"><path fill="#2AABEE" d="M12 0C5.37 0 0 5.37 0 12s5.37 12 12 12 12-5.37 12-12S18.63 0 12 0Zm5.53 8.15-1.83 8.63c-.14.62-.5.77-.99.48l-2.75-2.03-1.33 1.28c-.15.15-.27.27-.55.27l.2-2.8 5.1-4.6c.22-.2-.05-.3-.34-.12L8.66 13.2l-2.7-.84c-.59-.18-.6-.59.12-.87l10.56-4.07c.49-.18.92.12.76.87l.13-.14Z"/></svg>
+                  <span className="text-[11px] font-bold text-gray-400 group-hover:text-blue-400 font-mono tracking-wider">TELEGRAM</span>
+                </button>
+                <button onClick={() => handleSocialLogin("facebook")}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg bg-[#060710] border border-[#1e293b] hover:border-blue-600/40 hover:bg-blue-600/5 transition-all group">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24"><path fill="#1877F2" d="M24 12c0-6.63-5.37-12-12-12S0 5.37 0 12c0 5.99 4.39 10.95 10.13 11.85V15.47H7.08V12h3.05V9.36c0-3.01 1.79-4.67 4.53-4.67 1.31 0 2.69.23 2.69.23v2.96h-1.52c-1.49 0-1.96.93-1.96 1.88V12h3.33l-.53 3.47h-2.8v8.38C19.61 22.95 24 17.99 24 12Z"/></svg>
+                  <span className="text-[11px] font-bold text-gray-400 group-hover:text-blue-500 font-mono tracking-wider">FACEBOOK</span>
+                </button>
+              </div>
+            </div>
+          </div>
 
           {mode === "register" && (
             <div className="mt-5 pt-4 border-t border-[#1a1f35]">
