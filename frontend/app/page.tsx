@@ -408,7 +408,7 @@ export default function Home() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 mb-4">
             {Object.entries(DEPT_META).map(([deptId, meta]) => {
-              const dept = departments.find(d => d.id === deptId);
+              const dept = Array.isArray(departments) ? departments.find(d => d.id === deptId) : undefined;
               const deptAgents = agentsByDept(deptId);
               const live = liveInDept(deptId);
               const isActive = live > 0;
@@ -512,7 +512,7 @@ export default function Home() {
                 .filter(([, s]) => ACTIVE_STATUSES.includes(s.status))
                 .slice(0, 8)
                 .map(([agentId, s]) => {
-                  const agent = agents.find(a => a.id === agentId);
+                  const agent = Array.isArray(agents) ? agents.find(a => a.id === agentId) : undefined;
                   const dept = agent?.department_id || "";
                   const meta = DEPT_META[dept];
                   return (
@@ -695,7 +695,7 @@ function KanbanBoard({ events, statuses, agents }: {
       title: "⚡ Çalışıyor",
       color: "#22c55e",
       items: activeAgents.slice(0, 5).map(([id, s]) => {
-        const agent = agents.find(a => a.id === id);
+        const agent = Array.isArray(agents) ? agents.find(a => a.id === id) : undefined;
         return {
           id,
           text: `${agent?.name || id}: ${STATUS_LABELS[s.status] || s.status}`,
