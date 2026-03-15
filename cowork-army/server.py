@@ -18,6 +18,7 @@ from registry import BASE_AGENTS
 from runner import spawn_agent, kill_agent, get_statuses, get_output
 from commander import delegate_task, create_dynamic_agent
 from autonomous import autonomous
+from auth import register_user, login_user, get_current_user, require_user
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cowork")
@@ -55,7 +56,37 @@ async def lifespan(app):
 
 
 app = FastAPI(title="COWORK.ARMY", version="5.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
+
+# ══════════════ AUTH ══════════════
+@app.post("/api/auth/register")
+async def api_register(email: str = Form(...), password: str = Form(...),
+                       name: str = Form(...), company: str = Form("")):
+    return await register_user(email, password, name, company)
+
+@app.post("/api/auth/login")
+async def api_login(email: str = Form(...), password: str = Form(...)):
+    return await login_user(email, password)
+
+@app.get("/api/auth/me")
+async def api_me(request: Request):
+    user = await require_user(request)
+    safe = {k: v for k, v in user.items() if k != "password_hash"}
+    return safe
+
+@app.put("/api/auth/profile")
+async def api_update_profile(request: Request, name: str = Form(""), company: str = Form(""),
+                              avatar: str = Form("")):
+    user = await require_user(request)
+    db = get_db()
+    updates = {}
+    if name: updates["name"] = name
+    if company: updates["company"] = company
+    if avatar: updates["avatar"] = avatar
+    if updates:
+        await db.update_user(user["id"], **updates)
+    updated = await db.get_user(user["id"])
+    return {k: v for k, v in updated.items() if k != "password_hash"}
 
 # ══════════════ INFO ══════════════
 @app.get("/api/info")
@@ -70,8 +101,11 @@ async def api_info():
 
 # ══════════════ AGENTS ══════════════
 @app.get("/api/agents")
-async def api_agents():
+async def api_agents(request: Request):
     db = get_db()
+    user = await get_current_user(request)
+    if user:
+        return await db.get_user_agents(user["id"])
     return await db.get_all_agents()
 
 @app.get("/api/agents/{agent_id}")
@@ -82,18 +116,22 @@ async def api_agent_detail(agent_id: str):
 
 @app.post("/api/agents")
 async def api_create_agent(
+    request: Request,
     agent_id: str = Form(...), name: str = Form(...), icon: str = Form("🤖"),
     domain: str = Form(""), desc: str = Form(""),
     skills: str = Form(""), rules: str = Form(""), triggers: str = Form(""),
     system_prompt: str = Form("")
 ):
-    return await create_dynamic_agent(
+    user = await get_current_user(request)
+    owner_id = user["id"] if user else ""
+    result = await create_dynamic_agent(
         agent_id, name, icon, domain, desc,
         [s.strip() for s in skills.split(",") if s.strip()],
         [r.strip() for r in rules.split(",") if r.strip()],
         [t.strip() for t in triggers.split(",") if t.strip()],
-        system_prompt
+        system_prompt, owner_id=owner_id
     )
+    return result
 
 @app.put("/api/agents/{agent_id}")
 async def api_update_agent(agent_id: str, name: str = Form(""), icon: str = Form(""),

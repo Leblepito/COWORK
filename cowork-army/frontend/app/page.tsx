@@ -12,10 +12,12 @@ import { getCoworkAgents, getAgentStatuses, getAutonomousEvents, getAutonomousSt
   getApiKeyStatus, saveApiKey, setLlmProvider,
   getAnimationStates, triggerAnimation, broadcastAnimation } from "@/lib/cowork-api";
 import { AGENT_DEPARTMENT, DEPT_COLORS } from "@/components/cowork-army/scene-constants";
+import { useAuth } from "@/lib/auth-context";
 
 const CoworkOffice3D = dynamic(() => import("@/components/cowork-army/CoworkOffice3D"), { ssr: false });
 
 export default function Home() {
+  const { user, logout } = useAuth();
   const [agents, setAgents] = useState<CoworkAgent[]>([]);
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({});
   const [events, setEvents] = useState<AutonomousEvent[]>([]);
@@ -68,7 +70,7 @@ export default function Home() {
   const selAgent = agents.find(a => a.id === selected);
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col dashboard-layout">
       {/* HEADER */}
       <header className="flex items-center justify-between px-4 py-2 border-b border-[#1a1f30] flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -83,6 +85,18 @@ export default function Home() {
           <Stat value={liveCount} label="LIVE" color="#22c55e" />
           <Stat value={autoStatus?.tick_count ?? 0} label="TICKS" color="#818cf8" />
           {error && <span className="text-[8px] text-red-400 max-w-[200px] truncate">{error}</span>}
+          {user && (
+            <div className="flex items-center gap-2 ml-2 pl-2 border-l border-[#1a1f30]">
+              <div className="text-right">
+                <div className="text-[9px] font-bold text-amber-400">{user.avatar} {user.name}</div>
+                <div className="text-[6px] text-gray-500">{user.plan.toUpperCase()} PLAN</div>
+              </div>
+              <button onClick={logout}
+                className="text-[7px] px-2 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 font-bold">
+                Cikis
+              </button>
+            </div>
+          )}
         </div>
       </header>
 

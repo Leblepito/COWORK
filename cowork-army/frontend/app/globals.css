@@ -21,6 +21,9 @@ body {
   font-family: 'JetBrains Mono', monospace;
   background: var(--bg);
   color: var(--text);
+}
+
+body:has(.dashboard-layout) {
   overflow: hidden;
 }
 

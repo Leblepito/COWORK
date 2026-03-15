@@ -54,7 +54,8 @@ async def delegate_task(title: str, description: str, priority: str = "normal") 
 
 
 async def create_dynamic_agent(agent_id: str, name: str, icon: str, domain: str, desc: str,
-                               skills: list, rules: list, triggers: list, system_prompt: str) -> dict:
+                               skills: list, rules: list, triggers: list, system_prompt: str,
+                               owner_id: str = "") -> dict:
     """Create a new dynamic agent with full workspace setup."""
     db = get_db()
     ws = WORKSPACE / agent_id
@@ -73,6 +74,7 @@ async def create_dynamic_agent(agent_id: str, name: str, icon: str, domain: str,
         "color": "#9ca3af", "domain": domain, "desc": desc,
         "skills": skills, "rules": rules, "triggers": triggers,
         "system_prompt": system_prompt, "workspace_dir": agent_id, "is_base": 0,
+        "owner_id": owner_id,
     }
     await db.upsert_agent(agent_data)
     await db.add_event(agent_id, f"Yeni agent oluşturuldu: {name}", "info")
