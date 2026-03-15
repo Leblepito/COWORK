@@ -25,7 +25,7 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
-const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PATHS = ["/login", "/onboarding"];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CoworkUser | null>(null);
@@ -55,8 +55,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshUser]);
 
   useEffect(() => {
-    if (!loading && !user && !PUBLIC_PATHS.includes(pathname)) {
+    if (loading) return;
+    if (!user && !PUBLIC_PATHS.includes(pathname)) {
       router.replace("/login");
+      return;
+    }
+    // Redirect new users (plan=free) to onboarding
+    if (user && user.plan === "free" && pathname === "/") {
+      router.replace("/onboarding");
     }
   }, [loading, user, pathname, router]);
 

@@ -8,7 +8,7 @@ import uvicorn, os, uuid, logging
 from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -19,6 +19,7 @@ from runner import spawn_agent, kill_agent, get_statuses, get_output
 from commander import delegate_task, create_dynamic_agent
 from autonomous import autonomous
 from auth import register_user, login_user, get_current_user, require_user
+from army_templates import get_template_list, get_template
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cowork")
@@ -87,6 +88,100 @@ async def api_update_profile(request: Request, name: str = Form(""), company: st
         await db.update_user(user["id"], **updates)
     updated = await db.get_user(user["id"])
     return {k: v for k, v in updated.items() if k != "password_hash"}
+
+# ══════════════ ONBOARDING & TEMPLATES ══════════════
+@app.get("/api/templates")
+async def api_templates():
+    return get_template_list()
+
+@app.get("/api/templates/{template_id}")
+async def api_template_detail(template_id: str):
+    t = get_template(template_id)
+    if not t:
+        return JSONResponse({"detail": "Sablon bulunamadi"}, 404)
+    return t
+
+@app.post("/api/onboarding/setup")
+async def api_onboarding_setup(request: Request,
+                                template_id: str = Form(...),
+                                company_name: str = Form(""),
+                                custom_agents: str = Form("[]")):
+    """Setup user's agent army from a template."""
+    import json as _json
+
+    user = await require_user(request)
+    db = get_db()
+    template = get_template(template_id)
+    if not template:
+        return JSONResponse({"detail": "Gecersiz sablon"}, 400)
+
+    # Update company if provided
+    if company_name:
+        await db.update_user(user["id"], company=company_name)
+
+    created = []
+    for agent_def in template["agents"]:
+        agent_id = f"{user['id']}-{agent_def['suffix']}"
+        await create_dynamic_agent(
+            agent_id=agent_id,
+            name=agent_def["name"],
+            icon=agent_def["icon"],
+            domain=agent_def["domain"],
+            desc=agent_def["desc"],
+            skills=agent_def["skills"],
+            rules=agent_def["rules"],
+            triggers=agent_def["triggers"],
+            system_prompt=agent_def["system_prompt"],
+            owner_id=user["id"],
+        )
+        created.append(agent_id)
+
+    # Create CEO agent for this user
+    ceo_id = f"{user['id']}-ceo"
+    agent_names = ", ".join(a["name"] for a in template["agents"])
+    company_ctx = f" Sirket: {company_name}." if company_name else ""
+    ceo_prompt = (
+        f"Sen {user['name'] or 'kullanici'} icin calisan CEO Agent'sin.{company_ctx} "
+        f"Emrindeki agentlar: {agent_names}. "
+        "Gorevleri analiz et, uygun agentlara dagit, ilerlemeyi takip et. "
+        "Farkli gorev turleri verebilirsin:\n"
+        "- Sistem gelistirme (yeni ozellik ekleme, frontend/backend)\n"
+        "- Bug fix (hata duzeltme, debugging)\n"
+        "- SEO optimizasyonu (anahtar kelime, meta tag, sayfa hizi)\n"
+        "- Icerik uretimi (blog, sosyal medya, email)\n"
+        "- Pazarlama kampanyasi (reklam, analiz, A/B test)\n"
+        "- Veri analizi (rapor, metrik, performans)\n"
+        "- Guvenlik & DevOps (deployment, monitoring, CI/CD)\n"
+        "Her agent'in yeteneklerine gore gorev ata. "
+        "Birden fazla agent'i ayni anda calistirilabilir. "
+        "Oncelik sirasina gore gorev dagit ve sonuclari raporla."
+    )
+    await create_dynamic_agent(
+        agent_id=ceo_id, name="CEO Agent", icon="👔",
+        domain="Yonetim & Koordinasyon",
+        desc="Tum agentlari yoneten, gorev dagitan ve koordine eden ust duzey yonetici agent.",
+        skills=["task_delegation", "team_coordination", "strategic_planning",
+                "performance_monitoring", "project_management"],
+        rules=["Gorevleri agent yeteneklerine gore dagit",
+               "Ilerlemeyi duzenli takip et",
+               "Oncelik sirasina gore gorev ata"],
+        triggers=["gorev", "task", "koordine", "yonet", "manage", "plan", "proje", "project"],
+        system_prompt=ceo_prompt,
+        owner_id=user["id"],
+    )
+    created.append(ceo_id)
+
+    # Mark user as onboarded
+    await db.update_user(user["id"], plan=f"army:{template_id}")
+
+    await db.add_event(ceo_id, f"Yeni ordu kuruldu: {template['name']} ({len(created)} agent)", "info")
+
+    return {
+        "status": "ok",
+        "template": template_id,
+        "agents_created": created,
+        "count": len(created),
+    }
 
 # ══════════════ INFO ══════════════
 @app.get("/api/info")

@@ -28,9 +28,19 @@ export default function LoginPage() {
     try {
       if (mode === "register") {
         if (!name.trim()) { setError("Isim gerekli"); setLoading(false); return; }
-        await registerUser(email, password, name, company);
+        const result = await registerUser(email, password, name, company);
+        // New user → onboarding
+        router.replace("/onboarding");
+        setLoading(false);
+        return;
       } else {
-        await loginUser(email, password);
+        const result = await loginUser(email, password);
+        // Check if user needs onboarding
+        if (result.user.plan === "free") {
+          router.replace("/onboarding");
+          setLoading(false);
+          return;
+        }
       }
       router.replace("/");
     } catch (err: unknown) {
