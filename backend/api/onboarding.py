@@ -1,7 +1,9 @@
 """
 COWORK.ARMY — Onboarding & Templates API
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Depends, HTTPException
+from ..database import get_db
+from .auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["onboarding"])
 
@@ -23,6 +25,17 @@ async def get_templates():
 
 
 @router.post("/onboarding/setup")
-async def setup_onboarding():
-    """Placeholder — onboarding setup will be implemented later."""
-    return {"status": "ok", "message": "Kurulum tamamlandi"}
+async def setup_onboarding(request: Request, user=Depends(get_current_user)):
+    """Complete onboarding — update user plan from 'free' to 'starter'."""
+    form = await request.form()
+    template_id = str(form.get("template_id", "")).strip()
+    company_name = str(form.get("company_name", "")).strip()
+
+    if not template_id:
+        raise HTTPException(status_code=400, detail="Template secimi gerekli")
+
+    # Update user plan to 'starter' so they pass the onboarding gate
+    db = get_db()
+    await db.update_user_plan(int(user["id"]), "starter", company_name or None)
+
+    return {"status": "ok", "message": "Kurulum tamamlandi", "plan": "starter"}
