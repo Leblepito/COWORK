@@ -235,9 +235,10 @@ class SystemDataStream(DataStream):
     async def fetch(self) -> list[ExternalEvent]:
         """Monitor backend API health."""
         import aiohttp
+        port = os.environ.get("PORT", "8888")
         backend_url = os.environ.get(
             "BACKEND_HEALTH_URL",
-            "http://localhost:8888/api/info"
+            f"http://0.0.0.0:{port}/api/info"
         )
         try:
             async with aiohttp.ClientSession() as session:
