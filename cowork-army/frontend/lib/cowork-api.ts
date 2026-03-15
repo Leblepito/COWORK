@@ -71,6 +71,7 @@ export interface AutonomousEvent {
 export interface AutonomousStatus {
   running: boolean; tick_count: number; total_events: number;
   agents_tracked: number; last_tick: string | null;
+  credit_error?: boolean; credit_error_message?: string;
 }
 
 export interface ServerInfo {

@@ -7,7 +7,7 @@ import asyncio, json
 from datetime import datetime, timedelta
 from pathlib import Path
 from database import get_db
-from runner import spawn_agent, PROCS
+from runner import spawn_agent, PROCS, CREDIT_ERROR
 
 WORKSPACE = Path(__file__).parent / "workspace"
 
@@ -57,6 +57,15 @@ class AutonomousLoop:
         db = get_db()
         self.tick_count += 1
         self.last_tick = datetime.now().isoformat()
+
+        # Skip spawning if API credit error is active
+        if CREDIT_ERROR["active"]:
+            if self.tick_count % 10 == 0:  # Remind every ~5 minutes
+                await db.add_event("system",
+                    "⚠ API kredi yetersiz — agent spawn duraklatildi. Dashboard Settings'den API key kontrol edin veya kredi yukleyin.",
+                    "warning")
+            return
+
         agents = await db.get_all_agents()
 
         for agent in agents:
@@ -173,6 +182,8 @@ class AutonomousLoop:
             "agents_tracked": len(agents),
             "last_tick": self.last_tick,
             "debugger_errors": len(fresh_errors),
+            "credit_error": CREDIT_ERROR["active"],
+            "credit_error_message": CREDIT_ERROR.get("message", ""),
         }
 
 

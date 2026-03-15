@@ -15,6 +15,106 @@ import { useAuth } from "@/lib/auth-context";
 
 const CoworkOffice3D = dynamic(() => import("@/components/cowork-army/CoworkOffice3D"), { ssr: false });
 
+// Agent capability suggestions based on role/domain
+const AGENT_CAPABILITIES: Record<string, string[]> = {
+  "cargo": [
+    "Departmanlar arasi dosya transferi",
+    "Gorev paketlerini ilgili agent'a ilet",
+    "Oncelikli teslimat kuyrugu yonetimi",
+    "Inter-departman sync raporu olustur",
+  ],
+  "trade-master": [
+    "Kripto piyasa analizi baslat",
+    "Swarm konsensus oylama yonet",
+    "Pozisyon boyutlandirma hesapla",
+    "Gunluk trading raporu olustur",
+  ],
+  "chart-eye": [
+    "BTC/ETH chart analizi yap",
+    "Destek/direnc seviyeleri belirle",
+    "Pattern recognition (head&shoulders, triangle...)",
+    "Multi-timeframe analiz raporu",
+  ],
+  "risk-guard": [
+    "Trade onerisi risk degerlendirmesi",
+    "Drawdown analizi ve VETO karari",
+    "Korelasyon kontrolu calistir",
+    "Gunluk risk limiti raporu",
+  ],
+  "quant-brain": [
+    "Strateji backtest calistir (min 1000 trade)",
+    "Parametre optimizasyonu yap",
+    "Walk-forward validation",
+    "ML sinyal modeli egit ve raporla",
+  ],
+  "clinic-director": [
+    "Klinik operasyon plani olustur",
+    "Hasta akis koordinasyonu yap",
+    "JCI uyumluluk kontrolu",
+    "Tedavi planlama ve zamanla",
+  ],
+  "patient-care": [
+    "Yeni hasta sorgu formu degerlendir",
+    "Pre-op hazirlik checklist olustur",
+    "Post-op 6 ay takip plani yap",
+    "Cok dilli hasta iletisimi (TR/EN/RU/KZ)",
+  ],
+  "hotel-manager": [
+    "Doluluk orani analizi ve alarm",
+    "Dinamik fiyatlama optimizasyonu",
+    "VIP misafir protokolu olustur",
+    "Gunluk gelir raporu hazirla",
+  ],
+  "travel-planner": [
+    "Ucus + transfer paketi olustur",
+    "Medikal hasta VIP transfer organize et",
+    "Tur paketi planlama ve fiyatlandirma",
+    "Arac kiralama koordinasyonu",
+  ],
+  "concierge": [
+    "Misafir talebi karsilama (5dk SLA)",
+    "Restoran rezervasyon yap",
+    "Aktivite ve tur onerileri sun",
+    "Sikayet yonetimi ve escalation",
+  ],
+  "tech-lead": [
+    "Kod review ve mimari karar",
+    "Sprint planlama ve gorev dagitimi",
+    "Deploy oncesi kontrol ve onay",
+    "Teknik borc analizi yap",
+  ],
+  "full-stack": [
+    "Next.js frontend gelistirme",
+    "FastAPI backend endpoint olustur",
+    "API entegrasyon ve test yaz",
+    "Performans optimizasyon (CWV > 90)",
+  ],
+  "data-ops": [
+    "SEO analiz ve iyilestirme raporu",
+    "Dijital pazarlama kampanya olustur",
+    "A/B test planlama ve analiz",
+    "Haftalik ROI ve analytics raporu",
+  ],
+  "debugger": [
+    "Hata event'lerini analiz et (400/500)",
+    "Kok neden analizi ve duzeltme onerisi",
+    "Otomatik retry ve recovery",
+    "Hata raporu olustur ve logla",
+  ],
+};
+
+// Generate capabilities for dynamic agents based on skills
+function getAgentCapabilities(agent: CoworkAgent): string[] {
+  if (AGENT_CAPABILITIES[agent.id]) return AGENT_CAPABILITIES[agent.id];
+  // For dynamic agents, generate from skills
+  if (agent.skills?.length) {
+    return agent.skills.slice(0, 4).map(s =>
+      s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) + " gorevi calistir"
+    );
+  }
+  return ["Ozel gorev atanabilir"];
+}
+
 type MobileTab = "3d" | "agents" | "events";
 
 export default function Home() {
@@ -143,6 +243,15 @@ export default function Home() {
               <div className="flex flex-wrap gap-1 mb-2">
                 {selAgent.skills?.map(s => (
                   <span key={s} className="text-[7px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300">{s}</span>
+                ))}
+              </div>
+              <div className="text-[7px] text-gray-500 mb-1 tracking-wider">YAPABILECEGI GOREVLER</div>
+              <div className="space-y-0.5 mb-2">
+                {getAgentCapabilities(selAgent).map((cap, i) => (
+                  <div key={i} className="flex items-start gap-1.5">
+                    <span className="text-[7px] text-amber-500 mt-[1px]">▸</span>
+                    <span className="text-[8px] text-gray-300">{cap}</span>
+                  </div>
                 ))}
               </div>
               {statuses[selAgent.id]?.lines?.length > 0 && (
@@ -365,6 +474,14 @@ function EventPanel({ events, autoStatus, info, dayNightEnabled, setDayNightEnab
           </button>
         </div>
       </div>
+      {/* Credit error warning */}
+      {autoStatus?.credit_error && (
+        <div className="mx-2 mt-2 p-2 rounded bg-red-500/10 border border-red-500/30">
+          <div className="text-[8px] font-bold text-red-400 mb-1">⚠ API KREDI HATASI</div>
+          <div className="text-[7px] text-red-300/80">Anthropic API krediniz yetersiz. Agent spawn duraklatildi.</div>
+          <div className="text-[7px] text-gray-400 mt-1">Settings'den yeni API key girin veya kredi yukleyin.</div>
+        </div>
+      )}
       {/* Events */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {events.length === 0 && <div className="text-center text-[8px] text-gray-600 py-8">Henuz event yok</div>}

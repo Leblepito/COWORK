@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import setup_db, get_db
 from database.connection import set_event_loop
 from registry import BASE_AGENTS
-from runner import spawn_agent, kill_agent, get_statuses, get_output
+from runner import spawn_agent, kill_agent, get_statuses, get_output, CREDIT_ERROR
 from commander import delegate_task, create_dynamic_agent
 from autonomous import autonomous
 from auth import register_user, login_user, get_current_user, require_user
@@ -251,7 +251,8 @@ async def api_delete_agent(agent_id: str):
 # ══════════════ LIFECYCLE ══════════════
 @app.post("/api/agents/{agent_id}/spawn")
 async def api_spawn(agent_id: str, task: str = ""):
-    return await spawn_agent(agent_id, task)
+    # Manual spawn from UI bypasses credit error block
+    return await spawn_agent(agent_id, task, force=True)
 
 @app.post("/api/agents/{agent_id}/kill")
 async def api_kill(agent_id: str):
@@ -326,6 +327,9 @@ async def api_set_key(key: str = Form(...)):
     lines.append(f"ANTHROPIC_API_KEY={key}")
     env.write_text("\n".join(lines) + "\n")
     os.environ["ANTHROPIC_API_KEY"] = key
+    # Reset credit error flag so agents can retry with new key
+    CREDIT_ERROR["active"] = False
+    CREDIT_ERROR["message"] = ""
     return {"status": "saved", "preview": key[:12] + "..."}
 
 # ══════════════ ANIMATION ══════════════
