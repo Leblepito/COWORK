@@ -18,7 +18,7 @@ from registry import BASE_AGENTS
 from runner import spawn_agent, kill_agent, get_statuses, get_output, CREDIT_ERROR
 from commander import delegate_task, create_dynamic_agent
 from autonomous import autonomous
-from auth import register_user, login_user, get_current_user, require_user
+from auth import register_user, login_user, social_login, get_current_user, require_user
 from army_templates import get_template_list, get_template
 
 logging.basicConfig(level=logging.INFO)
@@ -74,6 +74,98 @@ async def api_me(request: Request):
     user = await require_user(request)
     safe = {k: v for k, v in user.items() if k != "password_hash"}
     return safe
+
+@app.post("/api/auth/social-login")
+async def api_social_login(provider: str = Form(...), provider_id: str = Form(...),
+                           email: str = Form(...), name: str = Form(...)):
+    return await social_login(provider, provider_id, email, name)
+
+@app.get("/api/auth/google/callback")
+async def api_google_callback(code: str = ""):
+    """Exchange Google OAuth code for user info, then social_login."""
+    import aiohttp
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "")
+    if not code or not client_id:
+        return JSONResponse({"error": "Google OAuth yapilandirilmamis"}, 400)
+    # Exchange code for token
+    async with aiohttp.ClientSession() as session:
+        token_resp = await session.post("https://oauth2.googleapis.com/token", data={
+            "code": code, "client_id": client_id, "client_secret": client_secret,
+            "redirect_uri": redirect_uri, "grant_type": "authorization_code",
+        })
+        token_data = await token_resp.json()
+    access_token = token_data.get("access_token")
+    if not access_token:
+        return JSONResponse({"error": "Google token alinamadi", "detail": token_data}, 400)
+    # Get user info
+    async with aiohttp.ClientSession() as session:
+        user_resp = await session.get("https://www.googleapis.com/oauth2/v2/userinfo",
+                                       headers={"Authorization": f"Bearer {access_token}"})
+        user_data = await user_resp.json()
+    result = await social_login("google", user_data["id"], user_data.get("email", ""), user_data.get("name", ""))
+    # Return HTML that posts message to opener window
+    token = result["token"]
+    html = f"""<html><body><script>
+    window.opener.postMessage({{type:'social-auth',token:'{token}',provider:'google',user:{__import__('json').dumps(result['user'])}}}, '*');
+    window.close();
+    </script><p>Giris yapiliyor...</p></body></html>"""
+    return HTMLResponse(html)
+
+@app.get("/api/auth/facebook/callback")
+async def api_facebook_callback(code: str = ""):
+    """Exchange Facebook OAuth code for user info, then social_login."""
+    import aiohttp
+    app_id = os.environ.get("FACEBOOK_APP_ID", "")
+    app_secret = os.environ.get("FACEBOOK_APP_SECRET", "")
+    redirect_uri = os.environ.get("FACEBOOK_REDIRECT_URI", "")
+    if not code or not app_id:
+        return JSONResponse({"error": "Facebook OAuth yapilandirilmamis"}, 400)
+    # Exchange code for token
+    async with aiohttp.ClientSession() as session:
+        token_resp = await session.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+            "code": code, "client_id": app_id, "client_secret": app_secret,
+            "redirect_uri": redirect_uri,
+        })
+        token_data = await token_resp.json()
+    access_token = token_data.get("access_token")
+    if not access_token:
+        return JSONResponse({"error": "Facebook token alinamadi"}, 400)
+    # Get user info
+    async with aiohttp.ClientSession() as session:
+        user_resp = await session.get("https://graph.facebook.com/me",
+                                       params={"fields": "id,name,email", "access_token": access_token})
+        user_data = await user_resp.json()
+    result = await social_login("facebook", user_data["id"], user_data.get("email", ""), user_data.get("name", ""))
+    token = result["token"]
+    html = f"""<html><body><script>
+    window.opener.postMessage({{type:'social-auth',token:'{token}',provider:'facebook',user:{__import__('json').dumps(result['user'])}}}, '*');
+    window.close();
+    </script><p>Giris yapiliyor...</p></body></html>"""
+    return HTMLResponse(html)
+
+@app.post("/api/auth/telegram/verify")
+async def api_telegram_verify(request: Request):
+    """Verify Telegram Login Widget data via HMAC-SHA-256."""
+    import hashlib, hmac, json as _json
+    body = await request.json()
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not bot_token:
+        return JSONResponse({"error": "Telegram bot yapilandirilmamis"}, 400)
+    check_hash = body.pop("hash", "")
+    # Verify: sorted key=value, HMAC-SHA-256 with SHA-256(bot_token)
+    data_check = "\n".join(f"{k}={body[k]}" for k in sorted(body.keys()))
+    secret_key = hashlib.sha256(bot_token.encode()).digest()
+    computed = hmac.new(secret_key, data_check.encode(), hashlib.sha256).hexdigest()
+    if computed != check_hash:
+        return JSONResponse({"error": "Telegram dogrulama basarisiz"}, 401)
+    tg_id = str(body.get("id", ""))
+    name = f"{body.get('first_name', '')} {body.get('last_name', '')}".strip()
+    # Telegram doesn't always provide email
+    email = body.get("email", f"tg_{tg_id}@telegram.user")
+    result = await social_login("telegram", tg_id, email, name)
+    return result
 
 @app.put("/api/auth/profile")
 async def api_update_profile(request: Request, name: str = Form(""), company: str = Form(""),

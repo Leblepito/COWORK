@@ -135,6 +135,37 @@ export async function getCurrentUser(): Promise<CoworkUser> {
   return coworkFetch<CoworkUser>("/auth/me");
 }
 
+export async function socialLogin(provider: string, providerId: string, email: string, name: string): Promise<AuthResponse> {
+  const fd = new FormData();
+  fd.append("provider", provider);
+  fd.append("provider_id", providerId);
+  fd.append("email", email);
+  fd.append("name", name);
+  const res = await fetch(`${BASE}/auth/social-login`, { method: "POST", body: fd });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ detail: "Sosyal giris hatasi" }));
+    throw new Error(data.detail || `API error ${res.status}`);
+  }
+  const data = await res.json() as AuthResponse;
+  setAuthToken(data.token);
+  return data;
+}
+
+export async function telegramVerify(telegramData: Record<string, unknown>): Promise<AuthResponse> {
+  const res = await fetch(`${BASE}/auth/telegram/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(telegramData),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ detail: "Telegram dogrulama hatasi" }));
+    throw new Error(data.detail || `API error ${res.status}`);
+  }
+  const data = await res.json() as AuthResponse;
+  setAuthToken(data.token);
+  return data;
+}
+
 export function logoutUser() {
   setAuthToken(null);
 }

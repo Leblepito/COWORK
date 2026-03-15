@@ -171,12 +171,15 @@ class Database:
     # ── Users ──
 
     async def create_user(self, user_id: str, email: str, password_hash: str,
-                          name: str, company: str = "") -> dict:
+                          name: str, company: str = "",
+                          auth_provider: str = "", auth_provider_id: str = "",
+                          avatar: str = "👤") -> dict:
         """Create a new user."""
         async with self._sf() as session:
             user = User(
                 id=user_id, email=email, password_hash=password_hash,
-                name=name, company=company,
+                name=name, company=company, avatar=avatar,
+                auth_provider=auth_provider, auth_provider_id=auth_provider_id,
             )
             session.add(user)
             await session.commit()
@@ -196,6 +199,18 @@ class Database:
         async with self._sf() as session:
             result = await session.execute(
                 select(User).where(User.email == email)
+            )
+            user = result.scalar_one_or_none()
+            return self._user_to_dict(user) if user else None
+
+    async def get_user_by_provider(self, provider: str, provider_id: str) -> dict | None:
+        """Get user by social auth provider (for social login)."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(User).where(
+                    User.auth_provider == provider,
+                    User.auth_provider_id == provider_id,
+                )
             )
             user = result.scalar_one_or_none()
             return self._user_to_dict(user) if user else None
@@ -286,6 +301,8 @@ class Database:
             "plan": u.plan, "max_agents": u.max_agents,
             "is_active": u.is_active,
             "password_hash": u.password_hash,
+            "auth_provider": getattr(u, "auth_provider", ""),
+            "auth_provider_id": getattr(u, "auth_provider_id", ""),
             "created_at": u.created_at.isoformat() if u.created_at else "",
         }
 

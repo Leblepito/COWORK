@@ -28,11 +28,14 @@ class User(Base):
     plan: Mapped[str] = mapped_column(String(30), default="free")
     max_agents: Mapped[int] = mapped_column(Integer, default=5)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    auth_provider: Mapped[str] = mapped_column(String(30), default="")
+    auth_provider_id: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow, onupdate=_utcnow)
 
     __table_args__ = (
         Index("ix_users_email", "email", unique=True),
+        Index("ix_users_provider", "auth_provider", "auth_provider_id"),
     )
 
 

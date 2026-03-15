@@ -91,6 +91,44 @@ async def register_user(email: str, password: str, name: str, company: str = "")
     return {"user": safe_user, "token": token}
 
 
+async def social_login(provider: str, provider_id: str, email: str, name: str) -> dict:
+    """Authenticate or register via social provider (Google, Telegram, Facebook)."""
+    db = get_db()
+
+    if provider not in ("google", "telegram", "facebook"):
+        raise HTTPException(status_code=400, detail="Desteklenmeyen provider")
+
+    # Check if user already exists with this provider
+    user = await db.get_user_by_provider(provider, provider_id)
+    if user:
+        if not user.get("is_active", True):
+            raise HTTPException(status_code=401, detail="Hesap devre disi")
+        token = create_token(user["id"], user["email"])
+        safe_user = {k: v for k, v in user.items() if k != "password_hash"}
+        return {"user": safe_user, "token": token}
+
+    # Check if email already exists (link social provider to existing account)
+    existing = await db.get_user_by_email(email)
+    if existing:
+        await db.update_user(existing["id"], auth_provider=provider, auth_provider_id=provider_id)
+        token = create_token(existing["id"], email)
+        safe_user = {k: v for k, v in existing.items() if k != "password_hash"}
+        safe_user["auth_provider"] = provider
+        return {"user": safe_user, "token": token}
+
+    # Create new user from social login
+    avatars = {"google": "🟢", "telegram": "🔵", "facebook": "🟦"}
+    user_id = f"user-{uuid.uuid4().hex[:12]}"
+    user = await db.create_user(
+        user_id=user_id, email=email, password_hash="",
+        name=name, avatar=avatars.get(provider, "👤"),
+        auth_provider=provider, auth_provider_id=provider_id,
+    )
+    token = create_token(user_id, email)
+    safe_user = {k: v for k, v in user.items() if k != "password_hash"}
+    return {"user": safe_user, "token": token}
+
+
 async def login_user(email: str, password: str) -> dict:
     """Authenticate a user and return token."""
     db = get_db()
