@@ -31,7 +31,10 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (!getAuthToken()) { router.replace("/login"); return; }
-    fetch(`${BASE}/templates`).then(r => r.json()).then(setTemplates).catch(() => setError("Sablonlar yuklenemedi"));
+    fetch(`${BASE}/templates`).then(r => r.json()).then(data => {
+      if (Array.isArray(data)) setTemplates(data);
+      else setError("Sablonlar yuklenemedi");
+    }).catch(() => setError("Sablonlar yuklenemedi"));
   }, [router]);
 
   const handleSetup = async () => {
@@ -57,7 +60,7 @@ export default function OnboardingPage() {
     }
   };
 
-  const sel = templates.find(t => t.id === selected);
+  const sel = Array.isArray(templates) ? templates.find(t => t.id === selected) : undefined;
   const sc = selected ? SECTOR_COLORS[selected] || { color: "#fbbf24", gradient: "from-amber-500/20 to-orange-500/20" } : null;
 
   return (
