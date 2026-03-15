@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, delete, update, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from .models import Department, Agent, Task, Event, CargoLog
+from .models import Department, Agent, Task, Event, CargoLog, LlmUsage, TaskHistory
 
 
 class Database:
@@ -363,3 +363,68 @@ class Database:
             s.add(obj)
             await s.commit()
             return obj.id
+
+    # ── LLM Usage Tracking ──
+
+    async def record_llm_usage(self, agent_id, provider, model, input_tokens, output_tokens, cost_usd):
+        async with self._sf() as s:
+            s.add(LlmUsage(agent_id=agent_id, provider=provider, model=model,
+                           input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost_usd))
+            await s.commit()
+
+    async def get_usage_summary(self, period="day"):
+        from datetime import timedelta
+        delta = {"day": 1, "week": 7, "month": 30}.get(period, 1)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=delta)
+        async with self._sf() as s:
+            result = await s.execute(
+                select(func.sum(LlmUsage.input_tokens).label("ti"),
+                       func.sum(LlmUsage.output_tokens).label("to"),
+                       func.sum(LlmUsage.cost_usd).label("tc"),
+                       func.count(LlmUsage.id).label("cc"))
+                .where(LlmUsage.timestamp >= cutoff))
+            row = result.one()
+            return {"period": period, "total_input_tokens": int(row.ti or 0),
+                    "total_output_tokens": int(row.to or 0),
+                    "total_cost_usd": float(row.tc or 0), "call_count": int(row.cc or 0)}
+
+    async def get_usage_by_agent(self, agent_id):
+        async with self._sf() as s:
+            result = await s.execute(
+                select(LlmUsage).where(LlmUsage.agent_id == agent_id)
+                .order_by(LlmUsage.timestamp.desc()).limit(100))
+            return [{"provider": r.provider, "model": r.model, "input_tokens": r.input_tokens,
+                     "output_tokens": r.output_tokens, "cost_usd": float(r.cost_usd),
+                     "timestamp": r.timestamp.isoformat()} for r in result.scalars().all()]
+
+    async def get_daily_spend(self):
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        async with self._sf() as s:
+            result = await s.execute(
+                select(func.coalesce(func.sum(LlmUsage.cost_usd), 0)).where(LlmUsage.timestamp >= today_start))
+            return float(result.scalar())
+
+    # ── Task History ──
+
+    async def record_task_transition(self, task_id, old_status, new_status, changed_by="system"):
+        async with self._sf() as s:
+            s.add(TaskHistory(task_id=task_id, old_status=old_status,
+                             new_status=new_status, changed_by=changed_by))
+            await s.commit()
+
+    async def get_task_history(self, task_id):
+        async with self._sf() as s:
+            result = await s.execute(
+                select(TaskHistory).where(TaskHistory.task_id == task_id)
+                .order_by(TaskHistory.changed_at.asc()))
+            return [{"old_status": r.old_status, "new_status": r.new_status,
+                     "changed_by": r.changed_by, "changed_at": r.changed_at.isoformat()}
+                    for r in result.scalars().all()]
+
+    async def purge_old_events(self, days=7):
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        async with self._sf() as s:
+            result = await s.execute(delete(Event).where(Event.timestamp < cutoff))
+            await s.commit()
+            return result.rowcount

@@ -17,6 +17,10 @@ from .database.connection import set_event_loop
 from .departments import DEPARTMENTS, ALL_AGENTS
 from .agents.world_model import get_world_model_manager
 from .agents.external_watcher import get_external_watcher
+from .logging_config import configure_logging
+from .middleware.error_handler import add_error_handlers
+from .middleware.rate_limit import add_rate_limiting
+from .env_check import validate_env
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -27,6 +31,9 @@ logger = logging.getLogger("cowork")
 async def lifespan(app: FastAPI):
     """Startup: init DB, seed departments and agents, create workspaces."""
     logger.info("COWORK.ARMY v7.0 starting up...")
+
+    configure_logging()
+    validate_env()
 
     # Store event loop for thread-safe DB access
     set_event_loop(asyncio.get_running_loop())
@@ -77,6 +84,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+add_error_handlers(app)
+add_rate_limiting(app)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -94,6 +104,7 @@ from .api.cargo import router as cargo_router
 from .api.autonomous import router as auto_router
 from .api.settings import router as settings_router
 from .api.websocket import router as ws_router
+from .api.usage import router as usage_router
 
 app.include_router(dept_router)
 app.include_router(agent_router)
@@ -102,6 +113,7 @@ app.include_router(cargo_router)
 app.include_router(auto_router)
 app.include_router(settings_router)
 app.include_router(ws_router)
+app.include_router(usage_router)
 
 
 if __name__ == "__main__":

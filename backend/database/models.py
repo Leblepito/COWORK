@@ -5,7 +5,7 @@ Tables: departments, agents, tasks, events, cargo_logs
 from datetime import datetime, timezone
 from sqlalchemy import (
     String, Text, Boolean, Integer, JSON, Index,
-    ForeignKey, func, TIMESTAMP,
+    ForeignKey, func, TIMESTAMP, Numeric,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -225,4 +225,42 @@ class CascadeChain(Base):
 
     __table_args__ = (
         Index("ix_cascade_chains_started", "started_at"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COST TRACKING & TASK HISTORY — Optimization modules
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _utcnow():
+    return datetime.now(timezone.utc)
+
+
+class LlmUsage(Base):
+    __tablename__ = "llm_usage"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[str] = mapped_column(String(100), nullable=True)
+    provider: Mapped[str] = mapped_column(String(30), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd = mapped_column(Numeric(10, 6), nullable=False, default=0)
+    timestamp: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
+    __table_args__ = (
+        Index("ix_llm_usage_agent_ts", "agent_id", "timestamp"),
+        Index("ix_llm_usage_ts", "timestamp"),
+    )
+
+
+class TaskHistory(Base):
+    __tablename__ = "task_history"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    old_status: Mapped[str] = mapped_column(String(30), nullable=True)
+    new_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    changed_by: Mapped[str] = mapped_column(String(100), default="system")
+    changed_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
+    __table_args__ = (
+        Index("ix_task_history_task", "task_id"),
+        Index("ix_task_history_ts", "changed_at"),
     )

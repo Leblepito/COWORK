@@ -17,6 +17,7 @@ from ..database import get_db
 from ..database.connection import get_event_loop
 from ..config import WORKSPACE, AGENT_MAX_TOKENS, AGENT_OUTPUT_MAX_LINES
 from .llm_providers import get_llm_provider, TOOL_DEFS
+from ..cost_tracking import calculate_cost
 from .tools import read_file, write_file, list_dir, search_files, run_command
 from ..departments.trade.tools_impl import TRADE_TOOLS_IMPL, TRADE_TOOL_DEFINITIONS
 from ..departments.bots.tools import BOTS_TOOLS_IMPL, BOTS_TOOL_DEFINITIONS
@@ -248,6 +249,20 @@ KURALLAR:
             proc.log(f"Tur {round_num + 1}/{MAX_TOOL_ROUNDS}...")
             dept_tools = get_tools_for_dept(dept_id)
             response = llm.get_response(sys_prompt, messages, dept_tools)
+
+            # Record LLM cost (never crash agent for tracking)
+            try:
+                usage = llm.get_last_usage() if hasattr(llm, 'get_last_usage') else {"input_tokens": 0, "output_tokens": 0}
+                if usage["input_tokens"] > 0:
+                    model_name = getattr(llm, 'model', getattr(llm, 'model_name', 'unknown'))
+                    cost = calculate_cost(model_name, usage["input_tokens"], usage["output_tokens"])
+                    provider_name_for_db = "gemini" if "gemini" in model_name.lower() else "anthropic"
+                    _sync_db(db.record_llm_usage(
+                        agent_id=proc.agent_id, provider=provider_name_for_db,
+                        model=model_name, input_tokens=usage["input_tokens"],
+                        output_tokens=usage["output_tokens"], cost_usd=cost))
+            except Exception:
+                pass
 
             if response.stop_reason == "tool_use":
                 tool_results = []
