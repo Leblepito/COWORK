@@ -150,7 +150,7 @@ class AnthropicProvider(LLMProvider):
 class GeminiProvider(LLMProvider):
     """Gemini via google-generativeai SDK."""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-2.5-pro"):
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         self._genai = genai
@@ -283,6 +283,6 @@ def get_provider(provider_name: str, api_key: str, model: str = "") -> LLMProvid
     if provider_name == "anthropic":
         return AnthropicProvider(api_key=api_key, model=model or "claude-sonnet-4-20250514")
     elif provider_name == "gemini":
-        return GeminiProvider(api_key=api_key, model=model or "gemini-2.0-flash")
+        return GeminiProvider(api_key=api_key, model=model or "gemini-2.5-pro")
     else:
         raise ValueError(f"Unknown LLM provider: {provider_name}. Use 'anthropic' or 'gemini'.")

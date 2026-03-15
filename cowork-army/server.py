@@ -306,31 +306,68 @@ async def api_auto_events(limit: int = 50, since: str = ""):
     db = get_db()
     return await db.get_events(limit, since)
 
-# ══════════════ SETTINGS ══════════════
-@app.get("/api/settings/api-key-status")
-async def api_key_status():
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not key:
+# ══════════════ SETTINGS (Multi-Provider) ══════════════
+
+def _read_env_key(key_name: str) -> str:
+    """Read a key from environment or .env file."""
+    v = os.environ.get(key_name, "")
+    if not v:
         env = BASE / ".env"
         if env.exists():
             for line in env.read_text().splitlines():
-                if line.startswith("ANTHROPIC_API_KEY=") and line.split("=", 1)[1].strip():
-                    key = line.split("=", 1)[1].strip()
-    return {"set": bool(key), "preview": (key[:12] + "...") if key else ""}
+                if line.startswith(f"{key_name}="):
+                    v = line.split("=", 1)[1].strip().strip('"')
+    return v
 
-@app.post("/api/settings/api-key")
-async def api_set_key(key: str = Form(...)):
+def _set_env_key(key_name: str, value: str):
+    """Set a key in .env file and os.environ."""
     env = BASE / ".env"
     lines = []
     if env.exists():
-        lines = [l for l in env.read_text().splitlines() if not l.startswith("ANTHROPIC_API_KEY=")]
-    lines.append(f"ANTHROPIC_API_KEY={key}")
+        lines = [l for l in env.read_text().splitlines() if not l.startswith(f"{key_name}=")]
+    lines.append(f"{key_name}={value}")
     env.write_text("\n".join(lines) + "\n")
-    os.environ["ANTHROPIC_API_KEY"] = key
+    os.environ[key_name] = value
+
+@app.get("/api/settings/api-key-status")
+async def api_key_status():
+    anthropic_key = _read_env_key("ANTHROPIC_API_KEY")
+    gemini_key = _read_env_key("GEMINI_API_KEY")
+    active_provider = _read_env_key("LLM_PROVIDER") or "anthropic"
+    return {
+        "anthropic": {"set": bool(anthropic_key), "preview": (anthropic_key[:12] + "...") if anthropic_key else ""},
+        "gemini": {"set": bool(gemini_key), "preview": (gemini_key[:12] + "...") if gemini_key else ""},
+        "active_provider": active_provider,
+        # Backward compat
+        "set": bool(anthropic_key) if active_provider == "anthropic" else bool(gemini_key),
+        "preview": (anthropic_key[:12] + "...") if active_provider == "anthropic" and anthropic_key else (gemini_key[:12] + "...") if gemini_key else "",
+    }
+
+@app.post("/api/settings/api-key")
+async def api_set_key(key: str = Form(...), provider: str = Form("anthropic")):
+    if provider == "gemini":
+        _set_env_key("GEMINI_API_KEY", key)
+    else:
+        _set_env_key("ANTHROPIC_API_KEY", key)
     # Reset credit error flag so agents can retry with new key
     CREDIT_ERROR["active"] = False
     CREDIT_ERROR["message"] = ""
-    return {"status": "saved", "preview": key[:12] + "..."}
+    return {"status": "saved", "provider": provider, "preview": key[:12] + "..."}
+
+@app.get("/api/settings/llm-provider")
+async def api_get_provider():
+    provider = _read_env_key("LLM_PROVIDER") or "anthropic"
+    return {"provider": provider}
+
+@app.post("/api/settings/llm-provider")
+async def api_set_provider(provider: str = Form(...)):
+    if provider not in ("anthropic", "gemini"):
+        return JSONResponse({"error": "Invalid provider. Use 'anthropic' or 'gemini'."}, 400)
+    _set_env_key("LLM_PROVIDER", provider)
+    # Reset credit error when switching provider
+    CREDIT_ERROR["active"] = False
+    CREDIT_ERROR["message"] = ""
+    return {"status": "ok", "provider": provider}
 
 # ══════════════ ANIMATION ══════════════
 @app.get("/api/animations/states")
