@@ -12,7 +12,7 @@ from passlib.context import CryptContext
 from ..database import get_db
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 security = HTTPBearer(auto_error=False)
 
 JWT_SECRET = os.environ.get(
@@ -71,7 +71,7 @@ async def register(request: Request):
     if existing:
         raise HTTPException(status_code=409, detail="Bu email zaten kayitli")
 
-    hashed = pwd_context.hash(password)
+    hashed = pwd_context.hash(password[:72])
     user = await db.create_user(email, hashed, name, company)
     token = _create_token(user["id"])
 
@@ -92,7 +92,7 @@ async def login(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Gecersiz email veya sifre")
 
-    if not pwd_context.verify(password, user["hashed_password"]):
+    if not pwd_context.verify(password[:72], user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Gecersiz email veya sifre")
 
     if not user.get("is_active", True):
