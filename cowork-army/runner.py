@@ -46,6 +46,9 @@ class AgentProc:
 
 PROCS: dict[str, AgentProc] = {}
 
+# Global flag: set when API credit/billing error detected — stops futile retries
+CREDIT_ERROR: dict = {"active": False, "message": "", "since": ""}
+
 
 def _read_env_value(key: str) -> str:
     """Read a value from environment or .env file."""
@@ -120,6 +123,7 @@ def _run(proc: AgentProc, task: str):
         proc.status = "error"; proc.log("Agent not found"); return
 
     proc.status = "thinking"
+    _sync_db(db.update_agent_mood(proc.agent_id, "focused", 90))
 
     provider_name, api_key, model = _get_llm_config()
     provider_label = "Gemini" if provider_name == "gemini" else "Claude"
@@ -193,11 +197,29 @@ Isini bitirdiginde sonucu ozetle."""
         _save_output(proc.agent_id, task, collected_text, proc)
         proc.status = "done"
         proc.log("Gorev tamamlandi!")
+        _sync_db(db.update_agent_mood(proc.agent_id, "happy", 70))
+        _sync_db(db.add_animation_event(proc.agent_id, "celebrate", {"reason": "task_complete"}))
         _sync_db(db.add_event(proc.agent_id, f"Gorev tamamlandi: {task[:50]}", "info"))
     except Exception as e:
+        err_str = str(e)
         proc.status = "error"
-        proc.log(f"Hata: {e}")
-        _sync_db(db.add_event(proc.agent_id, f"Hata: {e}", "warning"))
+        proc.log(f"Hata: {err_str}")
+
+        # Detect credit/billing errors — set global flag to stop futile retries
+        billing_keywords = ["credit balance", "billing", "insufficient_quota", "exceeded your current quota"]
+        if any(kw in err_str.lower() for kw in billing_keywords):
+            CREDIT_ERROR["active"] = True
+            CREDIT_ERROR["message"] = err_str[:200]
+            CREDIT_ERROR["since"] = datetime.now().isoformat()
+            proc.log("⚠ API kredi hatasi tespit edildi — otonom spawn duraklatildi")
+            _sync_db(db.add_event(proc.agent_id,
+                "⚠ API kredi yetersiz! Lutfen Plans & Billing'den kredi yukleyin. Otonom spawn duraklatildi.",
+                "warning"))
+        else:
+            _sync_db(db.add_event(proc.agent_id, f"Hata: {err_str}", "warning"))
+
+        _sync_db(db.update_agent_mood(proc.agent_id, "stressed", 30))
+        _sync_db(db.add_animation_event(proc.agent_id, "alert", {"reason": "error", "error": err_str[:100]}))
 
 
 def _save_output(agent_id: str, task: str, response: str, proc: AgentProc):
@@ -222,12 +244,16 @@ def _save_output(agent_id: str, task: str, response: str, proc: AgentProc):
 
 # ── Public API ──
 
-async def spawn_agent(agent_id: str, task: str = "") -> dict:
+async def spawn_agent(agent_id: str, task: str = "", force: bool = False) -> dict:
     db = get_db()
     agent = await db.get_agent(agent_id)
     if not agent: return {"error": f"Unknown agent: {agent_id}"}
     if agent_id in PROCS and PROCS[agent_id].alive:
         return {"error": "Already running", **PROCS[agent_id].to_dict()}
+
+    # Block spawn if credit error is active (unless manually forced from UI)
+    if CREDIT_ERROR["active"] and not force:
+        return {"error": "API kredi yetersiz — spawn duraklatildi. Dashboard'dan kredi yukleyin."}
 
     if not task:
         inbox = WORKSPACE / agent_id / "inbox"

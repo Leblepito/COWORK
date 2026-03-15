@@ -21,6 +21,7 @@ interface AgentAvatarProps {
     status: string;
     movementState?: AgentMovementState | null;
     isCollaborating?: boolean;
+    mood?: string;
 }
 
 export default function AgentAvatar({
@@ -30,6 +31,7 @@ export default function AgentAvatar({
     status,
     movementState,
     isCollaborating,
+    mood = "neutral",
 }: AgentAvatarProps) {
     const groupRef = useRef<THREE.Group>(null);
     const charGroupRef = useRef<THREE.Group>(null);
@@ -120,6 +122,7 @@ export default function AgentAvatar({
                     status={effectiveStatus}
                     facingAngle={facingAngle}
                     walkPhase={walkPhase}
+                    mood={mood}
                 />
             </group>
 
