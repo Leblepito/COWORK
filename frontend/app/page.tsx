@@ -15,6 +15,9 @@ import {
   startAutonomousLoop, stopAutonomousLoop, uploadCargo,
   createCoworkTask, spawnAgent,
 } from "@/lib/cowork-api";
+import { useAuth } from "@/lib/auth-context";
+
+type MobileMainTab = "dashboard" | "activity";
 
 // ─── CEO API ─────────────────────────────────────────────────────────────────
 
@@ -67,6 +70,7 @@ interface ActivityItem {
 // ─── Ana Bileşen ──────────────────────────────────────────────────────────────
 
 export default function Home() {
+  const { user, logout } = useAuth();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [agents, setAgents] = useState<CoworkAgent[]>([]);
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({});
@@ -83,6 +87,7 @@ export default function Home() {
   const [totalTasks, setTotalTasks] = useState(0);
   const [completedTasks, setCompletedTasks] = useState(0);
   const prevEventsRef = useRef<AutonomousEvent[]>([]);
+  const [mobileTab, setMobileTab] = useState<MobileMainTab>("dashboard");
 
   const fetchAll = useCallback(async () => {
     try {
@@ -174,42 +179,43 @@ export default function Home() {
     <div className="h-screen flex flex-col overflow-hidden" style={{ background: "#040710", fontFamily: "monospace" }}>
 
       {/* ═══ HEADER ═══ */}
-      <header style={{
+      <header className="flex items-center justify-between px-3 md:px-5 py-2 shrink-0 z-10" style={{
         background: "rgba(4,7,16,0.95)",
         borderBottom: "1px solid #0e1a2e",
         backdropFilter: "blur(16px)",
-        padding: "10px 20px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        flexShrink: 0,
-        zIndex: 10,
       }}>
         {/* Logo */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{
-            width: 38, height: 38, borderRadius: 10,
+        <div className="flex items-center gap-2 md:gap-3">
+          <div className="w-8 h-8 md:w-[38px] md:h-[38px] rounded-[10px] flex items-center justify-center text-sm md:text-lg" style={{
             background: "linear-gradient(135deg, #ffd700, #ff8800)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 18, boxShadow: "0 0 16px #ffd70040",
+            boxShadow: "0 0 16px #ffd70040",
           }}>👑</div>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 900, letterSpacing: 3, color: "#fff" }}>
+            <div className="text-[11px] md:text-[13px] font-black tracking-[3px] text-white">
               COWORK<span style={{ color: "#ffd700" }}>.ARMY</span>
             </div>
-            <div style={{ fontSize: 9, color: "#334", letterSpacing: 1 }}>
+            <div className="text-[8px] md:text-[9px] tracking-wider hidden sm:block" style={{ color: "#334" }}>
               SILICON VALLEY HQ · v{info?.version ?? "7.0"}
             </div>
           </div>
         </div>
 
         {/* Canlı sayaçlar */}
-        <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          <HeaderStat value={agents.length} label="ÇALIŞAN" color="#ffd700" />
-          <HeaderStat value={liveCount} label="AKTİF" color="#22c55e" pulse={liveCount > 0} />
-          <HeaderStat value={departments.length} label="DEPT" color="#818cf8" />
-          <HeaderStat value={totalTasks} label="GÖREV" color="#f472b6" />
-          <HeaderStat value={autoStatus?.tick_count ?? 0} label="TICK" color="#00ccff" />
+        <div className="flex items-center gap-3 md:gap-6">
+          {/* Stats - hide on mobile */}
+          <div className="hidden lg:flex items-center gap-6">
+            <HeaderStat value={agents.length} label="ÇALIŞAN" color="#ffd700" />
+            <HeaderStat value={liveCount} label="AKTİF" color="#22c55e" pulse={liveCount > 0} />
+            <HeaderStat value={departments.length} label="DEPT" color="#818cf8" />
+            <HeaderStat value={totalTasks} label="GÖREV" color="#f472b6" />
+            <HeaderStat value={autoStatus?.tick_count ?? 0} label="TICK" color="#00ccff" />
+          </div>
+
+          {/* Mobile compact stats */}
+          <div className="flex lg:hidden items-center gap-3 text-[9px] font-mono" style={{ color: "#445" }}>
+            <span><span className="font-bold" style={{ color: "#22c55e" }}>{liveCount}</span> aktif</span>
+            <span><span className="font-bold" style={{ color: "#ffd700" }}>{agents.length}</span> agent</span>
+          </div>
 
           {/* Otonom mod toggle */}
           <button
@@ -219,9 +225,8 @@ export default function Home() {
               const s = await getAutonomousStatus();
               setAutoStatus(s);
             }}
+            className="hidden sm:flex items-center gap-1.5 px-2.5 md:px-3.5 py-1.5 rounded-lg text-[10px] md:text-[11px] font-bold"
             style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700,
               border: autoStatus?.running ? "1px solid #22c55e40" : "1px solid #334",
               background: autoStatus?.running ? "#22c55e12" : "#0a1020",
               color: autoStatus?.running ? "#22c55e" : "#445",
@@ -233,40 +238,43 @@ export default function Home() {
               background: autoStatus?.running ? "#22c55e" : "#334",
               animation: autoStatus?.running ? "pulse 1.5s infinite" : "none",
             }} />
-            {autoStatus?.running ? "OTONOM AÇIK" : "OTONOM KAPALI"}
+            <span className="hidden md:inline">{autoStatus?.running ? "OTONOM AÇIK" : "OTONOM KAPALI"}</span>
+            <span className="md:hidden">{autoStatus?.running ? "ON" : "OFF"}</span>
           </button>
 
           {/* World link */}
-          <Link href="/world" style={{
-            display: "flex", alignItems: "center", gap: 6,
-            padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+          <Link href="/world" className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold no-underline" style={{
             border: "1px solid #00ff8833", background: "#00ff8808", color: "#00ff88",
-            textDecoration: "none", transition: "all 0.2s",
+            transition: "all 0.2s",
           }}>
             🌍 3D World
           </Link>
 
-          {/* Bağlantı durumu */}
-          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <div style={{
-              width: 7, height: 7, borderRadius: "50%",
-              background: connected ? "#22c55e" : "#ef4444",
-            }} />
-            <span style={{ fontSize: 9, color: connected ? "#22c55e80" : "#ef444480" }}>
+          {/* Connection dot */}
+          <div className="flex items-center gap-1">
+            <div style={{ width: 7, height: 7, borderRadius: "50%", background: connected ? "#22c55e" : "#ef4444" }} />
+            <span className="text-[8px] md:text-[9px] hidden sm:inline" style={{ color: connected ? "#22c55e80" : "#ef444480" }}>
               {connected ? "ONLINE" : "OFFLINE"}
             </span>
           </div>
+
+          {/* Logout */}
+          {user && (
+            <button onClick={logout} className="text-[8px] px-2 py-1 rounded font-bold font-mono hidden md:block" style={{
+              background: "#ef444410", color: "#ef4444", border: "1px solid #ef444420",
+            }}>Çıkış</button>
+          )}
         </div>
       </header>
 
       {/* ═══ MAIN ═══ */}
-      <div style={{ flex: 1, overflow: "hidden", display: "grid", gridTemplateColumns: "1fr 320px", gridTemplateRows: "1fr", gap: 0 }}>
+      <div className="flex-1 overflow-hidden flex flex-col md:grid" style={{ gridTemplateColumns: "1fr 320px", gridTemplateRows: "1fr", gap: 0 }}>
 
         {/* SOL PANEL — Ana içerik */}
-        <div style={{ overflow: "auto", padding: "16px 16px 16px 20px" }}>
+        <div className={`overflow-auto p-3 md:p-4 md:pl-5 ${mobileTab !== "dashboard" ? "hidden md:block" : ""}`}>
 
           {/* CEO + Kontroller */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
 
             {/* CEO Kartı */}
             <div style={{
@@ -398,7 +406,7 @@ export default function Home() {
           <div style={{ fontSize: 9, color: "#334", letterSpacing: 2, marginBottom: 10, fontWeight: 700 }}>
             DEPARTMANLAR — {Object.keys(DEPT_META).length} BÖLÜM
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 mb-4">
             {Object.entries(DEPT_META).map(([deptId, meta]) => {
               const dept = departments.find(d => d.id === deptId);
               const deptAgents = agentsByDept(deptId);
@@ -473,10 +481,8 @@ export default function Home() {
         </div>
 
         {/* SAĞ PANEL — Aktivite Akışı */}
-        <div style={{
+        <div className={`flex flex-col overflow-hidden ${mobileTab !== "activity" ? "hidden md:flex" : "flex"}`} style={{
           borderLeft: "1px solid #0e1a2e",
-          display: "flex", flexDirection: "column",
-          overflow: "hidden",
           background: "rgba(4,7,16,0.95)",
         }}>
           {/* Başlık */}
@@ -589,6 +595,32 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Mobile bottom nav */}
+      <nav className="md:hidden flex items-center justify-around border-t shrink-0" style={{ borderColor: "#0e1a2e", background: "#040710", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+        {([
+          { id: "dashboard" as MobileMainTab, icon: "📊", label: "Dashboard" },
+          { id: "activity" as MobileMainTab, icon: "⚡", label: "Aktivite" },
+        ]).map(tab => (
+          <button key={tab.id} onClick={() => setMobileTab(tab.id)}
+            className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-all ${
+              mobileTab === tab.id ? "text-yellow-400" : "text-gray-500"
+            }`} style={{ background: "transparent", border: "none", cursor: "pointer" }}>
+            <span className="text-lg">{tab.icon}</span>
+            <span className="text-[7px] font-bold tracking-wider font-mono">{tab.label}</span>
+          </button>
+        ))}
+        <Link href="/world" className="flex-1 flex flex-col items-center py-2.5 gap-0.5 text-gray-500 no-underline" style={{ background: "transparent" }}>
+          <span className="text-lg">🌍</span>
+          <span className="text-[7px] font-bold tracking-wider font-mono text-gray-500">3D World</span>
+        </Link>
+        {user && (
+          <button onClick={logout} className="flex-1 flex flex-col items-center py-2.5 gap-0.5 text-gray-500" style={{ background: "transparent", border: "none", cursor: "pointer" }}>
+            <span className="text-lg">🚪</span>
+            <span className="text-[7px] font-bold tracking-wider font-mono">Çıkış</span>
+          </button>
+        )}
+      </nav>
+
       {/* MODALS */}
       {showTaskModal && <TaskModal agents={agents} departments={departments} onClose={() => setShowTaskModal(false)} />}
       {showCargoModal && <CargoModal onClose={() => setShowCargoModal(false)} />}
@@ -685,7 +717,7 @@ function KanbanBoard({ events, statuses, agents }: {
   ];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
       {columns.map(col => (
         <div key={col.title} style={{
           background: "rgba(8,12,22,0.8)",
@@ -759,9 +791,9 @@ function TaskModal({ agents, departments, onClose }: {
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)",
       zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center",
     }} onClick={onClose}>
-      <div style={{
+      <div className="modal-content" style={{
         background: "#0a0e1a", border: "1px solid #818cf830", borderRadius: 18,
-        padding: 24, width: 460, boxShadow: "0 0 40px #818cf820",
+        padding: 24, width: 460, maxWidth: "95vw", boxShadow: "0 0 40px #818cf820",
       }} onClick={e => e.stopPropagation()}>
         <h2 style={{ fontSize: 13, fontWeight: 700, color: "#818cf8", marginBottom: 20, display: "flex", alignItems: "center", gap: 8, fontFamily: "monospace" }}>
           <span style={{ width: 32, height: 32, borderRadius: 8, background: "#818cf810", display: "flex", alignItems: "center", justifyContent: "center" }}>📋</span>
@@ -825,9 +857,9 @@ function CargoModal({ onClose }: { onClose: () => void }) {
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)",
       zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center",
     }} onClick={onClose}>
-      <div style={{
+      <div className="modal-content" style={{
         background: "#0a0e1a", border: "1px solid #f472b630", borderRadius: 18,
-        padding: 24, width: 460, boxShadow: "0 0 40px #f472b620",
+        padding: 24, width: 460, maxWidth: "95vw", boxShadow: "0 0 40px #f472b620",
       }} onClick={e => e.stopPropagation()}>
         <h2 style={{ fontSize: 13, fontWeight: 700, color: "#f472b6", marginBottom: 20, display: "flex", alignItems: "center", gap: 8, fontFamily: "monospace" }}>
           <span style={{ width: 32, height: 32, borderRadius: 8, background: "#f472b610", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</span>
