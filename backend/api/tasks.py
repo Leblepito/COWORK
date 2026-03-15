@@ -35,3 +35,9 @@ async def create_task(
         log=[{"action": "created", "by": "user", "at": datetime.now().isoformat()}],
         department_id=department_id or None,
     )
+
+
+@router.get("/{task_id}/history")
+async def task_history(task_id: str):
+    db = get_db()
+    return await db.get_task_history(task_id)

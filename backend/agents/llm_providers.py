@@ -68,6 +68,10 @@ class AnthropicProvider:
         from anthropic import Anthropic
         self.client = Anthropic(api_key=api_key)
         self.model = model or "claude-3-haiku-20240307"
+        self._last_usage: dict = {"input_tokens": 0, "output_tokens": 0}
+
+    def get_last_usage(self) -> dict:
+        return self._last_usage
 
     def get_response(self, system_prompt: str, messages: list, tools: list) -> LLMResponse:
         # Anthropic API tool_result içinde 'tool_name' alanını kabul etmez
@@ -113,6 +117,13 @@ class AnthropicProvider:
 
         response = self.client.messages.create(**kwargs)
 
+        # Track usage
+        if hasattr(response, "usage") and response.usage:
+            self._last_usage = {
+                "input_tokens": getattr(response.usage, "input_tokens", 0),
+                "output_tokens": getattr(response.usage, "output_tokens", 0),
+            }
+
         # Normalize response
         content = []
         for block in response.content:
@@ -136,6 +147,10 @@ class GeminiProvider:
         from google import genai
         self.client = genai.Client(api_key=api_key)
         self.model_name = model or "gemini-2.5-flash"
+        self._last_usage: dict = {"input_tokens": 0, "output_tokens": 0}
+
+    def get_last_usage(self) -> dict:
+        return self._last_usage
 
     def get_response(
         self,
@@ -217,6 +232,14 @@ class GeminiProvider:
                         f"Original error: {exc}"
                     )
             raise
+
+        # Track usage
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            um = response.usage_metadata
+            self._last_usage = {
+                "input_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
+            }
 
         # Normalize response
         content = []

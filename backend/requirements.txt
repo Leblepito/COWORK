@@ -16,3 +16,11 @@ aiohttp>=3.9.0
 # Build: 20260313-063348
 xlrd>=2.0.1
 openpyxl>=3.1.0
+
+# Optimization modules
+structlog
+slowapi
+python-jose[cryptography]
+passlib[bcrypt]
+tenacity
+cachetools
