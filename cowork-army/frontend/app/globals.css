@@ -15,12 +15,15 @@
   --text: #e2e8f0;
   --dim: #64748b;
   --accent: #fbbf24;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 body {
   font-family: 'JetBrains Mono', monospace;
   background: var(--bg);
   color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
 }
 
 body:has(.dashboard-layout) {
@@ -40,4 +43,33 @@ body:has(.dashboard-layout) {
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(100%); }
   to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.slide-up { animation: slideUp 0.3s ease-out; }
+
+/* Mobile bottom nav safe area */
+.mobile-bottom-nav {
+  padding-bottom: var(--safe-bottom);
+}
+
+/* Mobile panel transitions */
+.mobile-panel {
+  animation: slideUp 0.25s ease-out;
+}
+
+/* Touch-friendly tap targets */
+@media (max-width: 768px) {
+  button, select, input, textarea {
+    min-height: 36px;
+  }
+
+  /* Prevent zoom on input focus (iOS) */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
 }
