@@ -4,25 +4,51 @@ Tools agents can use: read_file, write_file, list_dir, search_files, run_command
 These are executed server-side when agents request tool use.
 """
 import os, json, subprocess, glob
+import structlog
 from pathlib import Path
+
+logger = structlog.get_logger()
 
 WORKSPACE = Path(__file__).parent / "workspace"
 PROJECT_ROOT = Path(os.environ.get("COWORK_ROOT", Path(__file__).parent.parent))
 
+# Configurable timeouts (seconds) per tool
+TOOL_TIMEOUTS: dict[str, int] = {
+    "read_file": 10,
+    "write_file": 10,
+    "list_dir": 5,
+    "search_files": 15,
+    "run_command": 30,
+}
+
+# Default LLM call timeout (seconds)
+LLM_TOOL_TIMEOUT: int = 120
+
+
+def _resolve_safe_path(agent_id: str, path: str) -> Path:
+    """Resolve path ensuring it stays within allowed boundaries."""
+    if path.startswith("/") or path.startswith("\\"):
+        resolved = Path(path).resolve()
+    else:
+        resolved = (WORKSPACE / agent_id / path).resolve()
+
+    workspace_resolved = WORKSPACE.resolve()
+    project_resolved = PROJECT_ROOT.resolve()
+    resolved_str = str(resolved)
+
+    if not (resolved_str.startswith(str(workspace_resolved)) or resolved_str.startswith(str(project_resolved))):
+        logger.warning("path_traversal_blocked", agent_id=agent_id, path=path, resolved=resolved_str)
+        raise ValueError(f"Access denied: path '{path}' is outside allowed directories")
+
+    return resolved
+
+
 def read_file(agent_id: str, path: str) -> dict:
     """Read a file from agent workspace or project directory."""
-    # Security: resolve and check path
-    if path.startswith("/"):
-        resolved = Path(path)
-    else:
-        resolved = WORKSPACE / agent_id / path
-    resolved = resolved.resolve()
-    
-    # Must be within workspace or project root
-    ok = str(resolved).startswith(str(WORKSPACE.resolve())) or \
-         str(resolved).startswith(str(PROJECT_ROOT.resolve()))
-    if not ok:
-        return {"error": "Access denied: path outside allowed directories"}
+    try:
+        resolved = _resolve_safe_path(agent_id, path)
+    except ValueError as e:
+        return {"error": str(e)}
     if not resolved.exists():
         return {"error": f"File not found: {path}"}
     if not resolved.is_file():
@@ -35,8 +61,13 @@ def read_file(agent_id: str, path: str) -> dict:
 
 def write_file(agent_id: str, path: str, content: str) -> dict:
     """Write a file to agent's workspace only."""
-    resolved = (WORKSPACE / agent_id / path).resolve()
+    # Write is restricted to the agent's own workspace subdirectory (not project root)
+    try:
+        resolved = (WORKSPACE / agent_id / path).resolve()
+    except Exception as e:
+        return {"error": str(e)}
     if not str(resolved).startswith(str((WORKSPACE / agent_id).resolve())):
+        logger.warning("path_traversal_blocked", agent_id=agent_id, path=path, resolved=str(resolved))
         return {"error": "Access denied: can only write to own workspace"}
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -48,20 +79,25 @@ def write_file(agent_id: str, path: str, content: str) -> dict:
 def list_dir(agent_id: str, path: str = "") -> dict:
     """List directory contents."""
     if not path or path == ".":
-        target = WORKSPACE / agent_id
-    elif path.startswith("/"):
-        target = Path(path)
+        target_path = ""
     else:
-        target = WORKSPACE / agent_id / path
-    target = target.resolve()
-    
-    ok = str(target).startswith(str(WORKSPACE.resolve())) or \
-         str(target).startswith(str(PROJECT_ROOT.resolve()))
-    if not ok:
-        return {"error": "Access denied"}
+        target_path = path
+
+    try:
+        if not target_path:
+            target = (WORKSPACE / agent_id).resolve()
+            workspace_resolved = WORKSPACE.resolve()
+            project_resolved = PROJECT_ROOT.resolve()
+            if not (str(target).startswith(str(workspace_resolved)) or str(target).startswith(str(project_resolved))):
+                return {"error": "Access denied"}
+        else:
+            target = _resolve_safe_path(agent_id, target_path)
+    except ValueError as e:
+        return {"error": str(e)}
+
     if not target.exists():
         return {"error": f"Directory not found: {path}"}
-    
+
     entries = []
     try:
         for item in sorted(target.iterdir()):
@@ -76,16 +112,14 @@ def list_dir(agent_id: str, path: str = "") -> dict:
 
 def search_files(agent_id: str, pattern: str, directory: str = "") -> dict:
     """Search for files matching a glob pattern."""
-    if directory:
-        base = Path(directory).resolve()
-    else:
-        base = WORKSPACE / agent_id
-    
-    ok = str(base.resolve()).startswith(str(WORKSPACE.resolve())) or \
-         str(base.resolve()).startswith(str(PROJECT_ROOT.resolve()))
-    if not ok:
-        return {"error": "Access denied"}
-    
+    try:
+        if directory:
+            base = _resolve_safe_path(agent_id, directory)
+        else:
+            base = (WORKSPACE / agent_id).resolve()
+    except ValueError as e:
+        return {"error": str(e)}
+
     matches = []
     try:
         for f in base.rglob(pattern):

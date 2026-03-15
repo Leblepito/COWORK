@@ -124,6 +124,7 @@ class AnthropicProvider(LLMProvider):
             messages=messages,
             tools=self._to_claude_tools(tools),
         )
+        self._last_response = response
         text = ""
         tool_calls = []
         # Build the raw content for message history
@@ -134,6 +135,16 @@ class AnthropicProvider(LLMProvider):
             elif block.type == "tool_use":
                 tool_calls.append(ToolCall(id=block.id, name=block.name, input=block.input))
         return text, tool_calls
+
+    def get_last_usage(self) -> dict:
+        if hasattr(self, "_last_response") and self._last_response:
+            usage = getattr(self._last_response, "usage", None)
+            if usage:
+                return {
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                }
+        return {"input_tokens": 0, "output_tokens": 0}
 
     def format_assistant_message(self, text: str, tool_calls: list[ToolCall]) -> dict:
         # Use the raw content blocks stored from the last API call
@@ -150,7 +161,7 @@ class AnthropicProvider(LLMProvider):
 class GeminiProvider(LLMProvider):
     """Gemini via google-generativeai SDK."""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.5-pro"):
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         self._genai = genai
@@ -243,6 +254,7 @@ class GeminiProvider(LLMProvider):
             tools=gemini_tools,
         )
         response = model.generate_content(contents)
+        self._last_response = response
 
         text = ""
         tool_calls = []
@@ -266,6 +278,16 @@ class GeminiProvider(LLMProvider):
 
         return text, tool_calls
 
+    def get_last_usage(self) -> dict:
+        if hasattr(self, "_last_response") and self._last_response:
+            meta = getattr(self._last_response, "usage_metadata", None)
+            if meta:
+                return {
+                    "input_tokens": getattr(meta, "prompt_token_count", 0),
+                    "output_tokens": getattr(meta, "candidates_token_count", 0),
+                }
+        return {"input_tokens": 0, "output_tokens": 0}
+
     def format_assistant_message(self, text: str, tool_calls: list[ToolCall]) -> dict:
         return {"role": "model", "content": self._last_parts}
 
@@ -283,6 +305,6 @@ def get_provider(provider_name: str, api_key: str, model: str = "") -> LLMProvid
     if provider_name == "anthropic":
         return AnthropicProvider(api_key=api_key, model=model or "claude-sonnet-4-20250514")
     elif provider_name == "gemini":
-        return GeminiProvider(api_key=api_key, model=model or "gemini-2.5-pro")
+        return GeminiProvider(api_key=api_key, model=model or "gemini-2.0-flash")
     else:
         raise ValueError(f"Unknown LLM provider: {provider_name}. Use 'anthropic' or 'gemini'.")

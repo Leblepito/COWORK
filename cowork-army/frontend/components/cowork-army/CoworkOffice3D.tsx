@@ -1,33 +1,26 @@
 "use client";
 /**
- * COWORK.ARMY — 3D Silicon Valley Campus (v9.0)
- * Living campus with day/night cycle, weather, mood indicators, spawn effects,
- * enhanced character animations, and full agent life simulation.
+ * COWORK.ARMY — 3D Office Scene (v7)
+ * 4 themed departments + cargo hub, 14 agents, collaboration beams
  */
-import { useRef, useMemo, useState, useCallback } from "react";
+import { useRef, useMemo, useState, useCallback, memo } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Text, ContactShadows } from "@react-three/drei";
+import { OrbitControls, Text, ContactShadows, Grid } from "@react-three/drei";
 import * as THREE from "three";
-import type { CoworkAgent, AgentStatus, AutonomousEvent, AnimationState } from "@/lib/cowork-api";
-import { DESK_POSITIONS, STATUS_COLORS, BUILDINGS } from "./scene-constants";
+import type { CoworkAgent, AgentStatus, AutonomousEvent } from "@/lib/cowork-api";
+import { DESK_POSITIONS, ZONES, STATUS_COLORS, DEPARTMENTS, DEPT_COLORS } from "./scene-constants";
 import AdvancedAgentAvatar from "./AgentAvatar";
 import AdvancedAgentDesk from "./AgentDesk";
 import SpeechBubble from "./SpeechBubble";
 import CollaborationBeam from "./collaboration/CollaborationBeam";
-import CampusEnvironment from "./campus/CampusEnvironment";
-import DepartmentBuilding from "./campus/DepartmentBuilding";
-import CampusCargoHub from "./campus/CampusCargoHub";
-import SocialInteractions from "./campus/SocialInteraction";
-import { useAgentLifeSystem, type AgentLifeState } from "./movement/AgentLifeSystem";
-import DayNightCycle, { NightStars } from "./effects/DayNightCycle";
-import WeatherSystem from "./effects/WeatherSystem";
-import type { WeatherType } from "./effects/WeatherSystem";
-import SpawnEffect from "./effects/SpawnEffect";
-import MoodIndicator from "./effects/MoodIndicator";
-import type { AgentMood } from "./effects/MoodIndicator";
+import { detectCollaborations } from "./collaboration/CollaborationDetector";
+import { useMovementSystem, type CollaborationPair } from "./movement/MovementSystem";
+import { TradeDepartment, MedicalDepartment, HotelDepartment, SoftwareDepartment, CargoHub } from "./departments";
+import { useInterval } from "../../hooks/useInterval";
+import AgentTooltip from "./AgentTooltip";
 
 // ═══ STATUS LED ═══
-function StatusLED({ position, color, active }: { position: [number, number, number]; color: string; active: boolean }) {
+const StatusLED = memo(function StatusLED({ position, color, active }: { position: [number, number, number]; color: string; active: boolean }) {
   const ref = useRef<THREE.PointLight>(null);
   useFrame(({ clock }) => {
     if (ref.current && active) {
@@ -37,254 +30,168 @@ function StatusLED({ position, color, active }: { position: [number, number, num
   return (
     <group position={position}>
       <mesh>
-        <sphereGeometry args={[0.06, 8, 8]} />
+        <sphereGeometry args={[0.04, 8, 8]} />
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={active ? 1.5 : 0.3} />
       </mesh>
-      <pointLight ref={ref} color={color} intensity={active ? 0.5 : 0.1} distance={3} />
+      <pointLight ref={ref} color={color} intensity={active ? 0.5 : 0.1} distance={2} />
     </group>
   );
-}
+});
 
-// ═══ LIVING AGENT NODE ═══
-function LivingAgentNode({
+// ═══ AGENT NODE — combines desk, avatar, LED, speech bubble ═══
+const AgentNode = memo(function AgentNode({
   agent,
   status,
-  lifeState,
+  movementState,
+  isCollaborating,
   latestMessage,
-  animState,
 }: {
   agent: CoworkAgent;
   status?: AgentStatus;
-  lifeState?: AgentLifeState;
+  movementState?: ReturnType<typeof useMovementSystem>[string] | null;
+  isCollaborating: boolean;
   latestMessage: string | null;
-  animState?: AnimationState;
 }) {
-  const deskPos = DESK_POSITIONS[agent.id] || [0, 0, 0];
+  const pos = DESK_POSITIONS[agent.id] || [0, 0, 0];
   const st = status?.status || "idle";
   const stColor = STATUS_COLORS[st] || "#64748b";
-  const isActive = ["working", "thinking", "coding", "searching", "planning", "delivering"].includes(st);
-
-  const agentPos = lifeState?.currentPosition;
-  const isMoving = lifeState?.isMoving ?? false;
-  const isSocializing = lifeState?.activity === "socializing";
-
-  // Extract mood and energy from animation state
-  const mood = (animState?.mood || "neutral") as AgentMood;
-  const energy = animState?.energy ?? 100;
-
-  // Active animation trigger
-  const activeAnimation = animState?.animation_state?.animation as string | undefined;
-  const [showSpawnEffect, setShowSpawnEffect] = useState(false);
-  const [spawnType, setSpawnType] = useState<"spawn" | "despawn" | "celebrate" | "alert" | "power_up" | "shake">("spawn");
-  const lastAnimRef = useRef<string>("");
-
-  // Detect new animation triggers
-  useFrame(() => {
-    if (activeAnimation && activeAnimation !== lastAnimRef.current) {
-      lastAnimRef.current = activeAnimation;
-      if (["spawn", "despawn", "celebrate", "alert", "power_up", "shake"].includes(activeAnimation)) {
-        setSpawnType(activeAnimation as typeof spawnType);
-        setShowSpawnEffect(true);
-      }
-    }
-  });
-
-  const effectPos: [number, number, number] = agentPos && isMoving
-    ? [agentPos.x, 0, agentPos.z]
-    : [deskPos[0], deskPos[1], deskPos[2]];
-
-  const moodPos = agentPos && isMoving
-    ? agentPos
-    : new THREE.Vector3(deskPos[0], deskPos[1], deskPos[2]);
 
   return (
     <group>
       {/* Desk */}
-      <AdvancedAgentDesk agent={agent} position={[deskPos[0], deskPos[1], deskPos[2]]} />
-
+      <AdvancedAgentDesk agent={agent} position={[pos[0], pos[1], pos[2]]} />
       {/* Status LED */}
       <StatusLED
-        position={
-          agentPos && isMoving
-            ? [agentPos.x, 1.5, agentPos.z]
-            : [deskPos[0], deskPos[1] + 1.5, deskPos[2]]
-        }
+        position={[pos[0], pos[1] + 1.3, pos[2]]}
         color={stColor}
-        active={isActive}
+        active={["working", "thinking", "coding", "searching", "planning", "delivering"].includes(st)}
       />
-
-      {/* Avatar */}
+      {/* Advanced Avatar */}
       <AdvancedAgentAvatar
         agentId={agent.id}
-        position={[deskPos[0], deskPos[1], deskPos[2]]}
+        position={[pos[0], pos[1], pos[2]]}
         color={agent.color}
         status={st}
-        movementState={lifeState ? {
-          isMoving: lifeState.isMoving,
-          currentPosition: lifeState.currentPosition,
-          progress: lifeState.progress,
-          facingAngle: lifeState.facingAngle,
-          walkCyclePhase: lifeState.walkCyclePhase,
-        } : undefined}
-        isCollaborating={isSocializing}
+        movementState={movementState}
+        isCollaborating={isCollaborating}
       />
-
-      {/* Mood indicator */}
-      {mood !== "neutral" && (
-        <MoodIndicator
-          position={moodPos}
-          mood={mood}
-          energy={energy}
-          color={agent.color}
-        />
-      )}
-
-      {/* Spawn/Animation effect */}
-      {showSpawnEffect && (
-        <SpawnEffect
-          position={effectPos}
-          type={spawnType}
-          color={agent.color}
-          onComplete={() => setShowSpawnEffect(false)}
-        />
-      )}
-
       {/* Speech Bubble */}
-      <SpeechBubble
-        position={
-          agentPos && isMoving
-            ? [agentPos.x, 0, agentPos.z]
-            : [deskPos[0], deskPos[1], deskPos[2]]
-        }
-        message={latestMessage}
-      />
+      <SpeechBubble position={[pos[0], pos[1], pos[2]]} message={latestMessage} />
     </group>
   );
-}
+});
 
-// ═══ CAMPUS HOLOGRAM ═══
-function CampusHologram() {
-  const ref = useRef<THREE.Group>(null);
-  const ringRef = useRef<THREE.Mesh>(null);
+// ═══ ZONE BORDERS ═══
+const ZoneBorder = memo(function ZoneBorder({ zone }: { zone: (typeof ZONES)[0] }) {
+  const hw = zone.size[0] / 2 + 0.5;
+  const hd = zone.size[1] / 2 + 0.5;
+  const y = 0.02;
+  const pts = [
+    new THREE.Vector3(-hw, y, -hd), new THREE.Vector3(hw, y, -hd),
+    new THREE.Vector3(hw, y, hd), new THREE.Vector3(-hw, y, hd),
+    new THREE.Vector3(-hw, y, -hd),
+  ];
+  const geom = useMemo(() => new THREE.BufferGeometry().setFromPoints(pts), []);
+
+  return (
+    <group position={[zone.center[0], 0, zone.center[2]]}>
+      <lineSegments geometry={geom}>
+        <lineBasicMaterial color={zone.color} transparent opacity={0.3} />
+      </lineSegments>
+      <Text position={[0, 0.05, -hd - 0.3]} fontSize={0.2} color={zone.color}
+        anchorX="center" anchorY="middle">
+        {zone.label}
+      </Text>
+    </group>
+  );
+});
+
+// ═══ CENTER HOLOGRAM ═══
+const CenterHologram = memo(function CenterHologram() {
+  const ref = useRef<THREE.Mesh>(null);
   useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
-    if (ref.current) ref.current.rotation.y = t * 0.3;
-    // Pulsing hologram ring
-    if (ringRef.current) {
-      ringRef.current.rotation.x = Math.PI / 2;
-      ringRef.current.rotation.z = t * 0.5;
-      const scale = 1 + Math.sin(t * 1.5) * 0.1;
-      ringRef.current.scale.setScalar(scale);
-      const mat = ringRef.current.material as THREE.MeshStandardMaterial;
-      mat.opacity = 0.15 + Math.sin(t * 2) * 0.05;
-    }
+    if (ref.current) ref.current.rotation.y = clock.getElapsedTime() * 0.5;
   });
   return (
-    <group position={[0, 7, 0]}>
-      <group ref={ref}>
-        <mesh>
-          <sphereGeometry args={[1.0, 12, 8]} />
-          <meshStandardMaterial color="#fbbf24" wireframe transparent opacity={0.2} emissive="#fbbf24" emissiveIntensity={0.3} />
-        </mesh>
-        <mesh>
-          <boxGeometry args={[0.6, 0.6, 0.6]} />
-          <meshStandardMaterial color="#fbbf24" wireframe transparent opacity={0.15} emissive="#fbbf24" emissiveIntensity={0.4} />
-        </mesh>
-      </group>
-      {/* Orbiting ring */}
-      <mesh ref={ringRef}>
-        <torusGeometry args={[1.5, 0.02, 8, 32]} />
-        <meshStandardMaterial color="#fbbf24" emissive="#fbbf24" emissiveIntensity={0.6} transparent opacity={0.2} />
+    <group position={[0, 4, 0]}>
+      <mesh ref={ref}>
+        <boxGeometry args={[1.2, 1.2, 1.2]} />
+        <meshStandardMaterial color="#fbbf24" wireframe transparent opacity={0.15} emissive="#fbbf24" emissiveIntensity={0.3} />
       </mesh>
-      <Text position={[0, 1.3, 0]} fontSize={0.25} color="#fbbf24" anchorX="center" anchorY="middle">
+      <Text position={[0, 0, 0.65]} fontSize={0.14} color="#fbbf24" anchorX="center" anchorY="middle">
         COWORK.ARMY
       </Text>
-      <Text position={[0, 1.0, 0]} fontSize={0.15} color="#94a3b8" anchorX="center" anchorY="middle">
-        Silicon Valley Campus
-      </Text>
-      <Text position={[0, 0.75, 0]} fontSize={0.12} color="#64748b" anchorX="center" anchorY="middle">
-        v9.0
+      <Text position={[0, -0.25, 0.65]} fontSize={0.09} color="#64748b" anchorX="center" anchorY="middle">
+        v7.0
       </Text>
     </group>
   );
-}
+});
 
-// ═══ DYNAMIC AGENT ZONE — "Startup Garage" ═══
-function DynamicAgentZone({
-  agents,
-  statuses,
-  lifeStates,
-  latestMessages,
-}: {
-  agents: CoworkAgent[];
-  statuses: Record<string, AgentStatus>;
-  lifeStates: Record<string, AgentLifeState>;
-  latestMessages: Record<string, string>;
-}) {
+// ═══ DYNAMIC AGENT ZONE ═══
+const DynamicAgentZone = memo(function DynamicAgentZone({ agents, statuses }: { agents: CoworkAgent[]; statuses: Record<string, AgentStatus> }) {
   if (agents.length === 0) return null;
 
   return (
-    <group position={[0, 0, 36]}>
-      <mesh position={[0, 1.5, 0]}>
-        <boxGeometry args={[agents.length * 3 + 4, 3, 6]} />
-        <meshStandardMaterial color="#1e293b" roughness={0.5} metalness={0.2} />
-      </mesh>
-      <mesh position={[0, 3.05, 0]}>
-        <boxGeometry args={[agents.length * 3 + 4.5, 0.1, 6.5]} />
-        <meshStandardMaterial color="#64748b" emissive="#64748b" emissiveIntensity={0.1} />
-      </mesh>
-      <Text position={[0, 3.4, 3.1]} fontSize={0.5} color="#64748b" anchorX="center" anchorY="middle">
-        STARTUP GARAGE
+    <group position={[0, 0, 18]}>
+      <Text position={[0, 0.05, -1.5]} fontSize={0.15} color="#64748b" anchorX="center" anchorY="middle">
+        DYNAMIC AGENTS
       </Text>
-
       {agents.map((a, i) => {
-        const x = (i - (agents.length - 1) / 2) * 3;
+        const x = (i - (agents.length - 1) / 2) * 2.5;
         const pos: [number, number, number] = [x, 0, 0];
         const st = statuses[a.id]?.status || "idle";
         const stColor = STATUS_COLORS[st] || "#64748b";
         return (
           <group key={a.id}>
             <AdvancedAgentDesk agent={a} position={pos} />
-            <StatusLED position={[x, 1.5, 0]} color={stColor} active={st !== "idle"} />
+            <StatusLED position={[x, 1.3, 0]} color={stColor} active={st !== "idle"} />
             <AdvancedAgentAvatar agentId={a.id} position={pos} color={a.color} status={st} />
-            <SpeechBubble position={pos} message={latestMessages[a.id] || null} />
-            <mesh position={[x, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-              <circleGeometry args={[1.2, 12]} />
-              <meshStandardMaterial color="#64748b" emissive="#64748b" emissiveIntensity={0.1} transparent opacity={0.3} />
-            </mesh>
+            <SpeechBubble position={pos} message={null} />
           </group>
         );
       })}
     </group>
   );
-}
+});
 
-// ═══ INNER SCENE ═══
+// ═══ INNER SCENE (needs R3F context for hooks) ═══
 function InnerScene({
   agents,
   statuses,
   events,
-  animationStates,
-  autonomousActive,
-  dayNightEnabled,
-  weatherType,
 }: {
   agents: CoworkAgent[];
   statuses: Record<string, AgentStatus>;
   events: AutonomousEvent[];
-  animationStates: Record<string, AnimationState>;
-  autonomousActive: boolean;
-  dayNightEnabled: boolean;
-  weatherType: WeatherType;
 }) {
+  const [collaborations, setCollaborations] = useState<CollaborationPair[]>([]);
+  const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
+
+  const handlePointerOver = useCallback((id: string) => setHoveredAgent(id), []);
+  const handlePointerOut = useCallback(() => setHoveredAgent(null), []);
+
   const baseAgents = useMemo(() => agents.filter(a => a.is_base !== false && DESK_POSITIONS[a.id]), [agents]);
   const dynamicAgents = useMemo(() => agents.filter(a => !DESK_POSITIONS[a.id]), [agents]);
+
   const agentIds = useMemo(() => baseAgents.map((a: CoworkAgent) => a.id), [baseAgents]);
+  const agentTiers = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const a of agents) map[a.id] = a.tier;
+    return map;
+  }, [agents]);
 
-  // ── Agent Life System ──
-  const lifeStates = useAgentLifeSystem(agentIds, statuses, events);
+  // Movement system
+  const movementStates = useMovementSystem(agentIds, collaborations);
 
-  // Latest messages
+  // Collaboration detection — runs every 500ms via useInterval
+  useInterval(() => {
+    const now = Date.now();
+    const detected = detectCollaborations(events, collaborations, agentTiers, now);
+    setCollaborations(detected);
+  }, 500);
+
+  // Build latest message map from events (most recent per agent)
   const latestMessages = useMemo(() => {
     const map: Record<string, string> = {};
     for (const ev of events) {
@@ -295,125 +202,101 @@ function InnerScene({
     return map;
   }, [events]);
 
-  // Agent colors map
-  const agentColors = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const a of agents) map[a.id] = a.color;
-    return map;
-  }, [agents]);
-
-  // Social beams
-  const socialBeams = useMemo(() => {
-    const beams: { from: string; to: string }[] = [];
-    const seen = new Set<string>();
-    for (const [id, state] of Object.entries(lifeStates)) {
-      if ((state.activity === "socializing" || state.activity === "walking_to_social") && state.socialPartner) {
-        const key = [id, state.socialPartner].sort().join("-");
-        if (!seen.has(key)) {
-          seen.add(key);
-          beams.push({ from: id, to: state.socialPartner });
-        }
-      }
+  // Collab-active agents set
+  const collabAgents = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of collaborations) {
+      set.add(c.agentA);
+      set.add(c.agentB);
     }
-    return beams;
-  }, [lifeStates]);
+    return set;
+  }, [collaborations]);
 
   return (
     <>
-      {/* ══════ Lighting — Day/Night Cycle or Static ══════ */}
-      {dayNightEnabled ? (
-        <DayNightCycle cycleDuration={120} enabled={true} />
-      ) : (
-        <>
-          <ambientLight intensity={0.2} />
-          <directionalLight position={[30, 40, 20]} intensity={0.5} castShadow color="#fff5e1" />
-        </>
-      )}
-      <directionalLight position={[-20, 30, -10]} intensity={0.15} color="#c7d2fe" />
+      {/* Lighting */}
+      <ambientLight intensity={0.25} />
+      <directionalLight position={[15, 20, 15]} intensity={0.4} castShadow />
 
-      {Object.entries(BUILDINGS).map(([id, bldg]) => (
-        <spotLight
-          key={id}
-          position={[bldg.center[0], 15, bldg.center[2]]}
-          angle={0.6}
-          penumbra={0.5}
-          intensity={0.5}
-          color={bldg.color}
-        />
-      ))}
-      <spotLight position={[0, 15, 0]} angle={0.7} penumbra={0.5} intensity={0.4} color="#f59e0b" />
+      {/* Department spot lights */}
+      <spotLight position={[-12, 10, -8]} angle={0.5} penumbra={0.5} intensity={0.6} color={DEPT_COLORS.trade} />
+      <spotLight position={[12, 10, -8]} angle={0.5} penumbra={0.5} intensity={0.6} color={DEPT_COLORS.medical} />
+      <spotLight position={[-12, 10, 8]} angle={0.5} penumbra={0.5} intensity={0.6} color={DEPT_COLORS.hotel} />
+      <spotLight position={[12, 10, 8]} angle={0.5} penumbra={0.5} intensity={0.6} color={DEPT_COLORS.software} />
+      {/* Cargo hub light */}
+      <spotLight position={[0, 12, 0]} angle={0.6} penumbra={0.5} intensity={0.8} color="#f59e0b" />
 
-      {/* ══════ Night Stars ══════ */}
-      {dayNightEnabled && <NightStars cycleDuration={120} />}
+      {/* Floor */}
+      <Grid args={[50, 50]} cellSize={1} cellThickness={0.5} cellColor="#1a1a2e"
+        sectionSize={5} sectionThickness={1} sectionColor="#252540"
+        position={[0, 0, 0]} fadeDistance={40} />
+      <ContactShadows position={[0, 0, 0]} opacity={0.3} scale={50} blur={2} />
 
-      {/* ══════ Weather System ══════ */}
-      <WeatherSystem
-        type={weatherType}
-        intensity={0.8}
-        autonomousActive={autonomousActive}
-      />
+      {/* Zone borders */}
+      {ZONES.map(z => <ZoneBorder key={z.id} zone={z} />)}
 
-      {/* ══════ Campus Environment ══════ */}
-      <CampusEnvironment />
-      <ContactShadows position={[0, 0, 0]} opacity={0.25} scale={80} blur={2} />
+      {/* ══════ Department Environments ══════ */}
+      <TradeDepartment position={[DEPARTMENTS.trade.center[0], 0, DEPARTMENTS.trade.center[2]]} />
+      <MedicalDepartment position={[DEPARTMENTS.medical.center[0], 0, DEPARTMENTS.medical.center[2]]} />
+      <HotelDepartment position={[DEPARTMENTS.hotel.center[0], 0, DEPARTMENTS.hotel.center[2]]} />
+      <SoftwareDepartment position={[DEPARTMENTS.software.center[0], 0, DEPARTMENTS.software.center[2]]} />
+      <CargoHub position={[0, 0, 0]} />
 
-      {/* ══════ Department Buildings ══════ */}
-      {Object.entries(BUILDINGS).map(([id, bldg]) => (
-        <DepartmentBuilding key={id} building={bldg} deptId={id} />
-      ))}
-
-      {/* ══════ Cargo Hub ══════ */}
-      <CampusCargoHub />
-
-      {/* ══════ Living Agent Nodes ══════ */}
-      {baseAgents.map((a: CoworkAgent) => (
-        <LivingAgentNode
-          key={a.id}
-          agent={a}
-          status={statuses[a.id]}
-          lifeState={lifeStates[a.id]}
-          latestMessage={latestMessages[a.id] || null}
-          animState={animationStates[a.id]}
-        />
-      ))}
-
-      {/* ══════ Dynamic Agents ══════ */}
-      <DynamicAgentZone
-        agents={dynamicAgents}
-        statuses={statuses}
-        lifeStates={lifeStates}
-        latestMessages={latestMessages}
-      />
-
-      {/* ══════ Social Interaction Effects ══════ */}
-      <SocialInteractions
-        lifeStates={lifeStates}
-        agentColors={agentColors}
-        statuses={statuses}
-      />
-
-      {/* ══════ Collaboration Beams ══════ */}
-      {socialBeams.map((beam, i) => {
-        const fromState = lifeStates[beam.from];
-        const toState = lifeStates[beam.to];
-        if (!fromState || !toState) return null;
+      {/* ══════ Base Agent Nodes ══════ */}
+      {baseAgents.map((a: CoworkAgent) => {
+        const deskPos = DESK_POSITIONS[a.id] as [number, number, number] || [0, 0, 0];
         return (
-          <CollaborationBeam
-            key={`beam-${i}`}
-            fromPosition={fromState.currentPosition.clone().add(new THREE.Vector3(0, 1, 0))}
-            toPosition={toState.currentPosition.clone().add(new THREE.Vector3(0, 1, 0))}
-            color={agentColors[beam.from] || "#fbbf24"}
-            active={true}
-          />
+          <group key={a.id}
+            onPointerOver={() => handlePointerOver(a.id)}
+            onPointerOut={handlePointerOut}>
+            <AgentNode
+              agent={a}
+              status={statuses[a.id]}
+              movementState={movementStates[a.id] || null}
+              isCollaborating={collabAgents.has(a.id)}
+              latestMessage={latestMessages[a.id] || null}
+            />
+            <AgentTooltip
+              name={a.name}
+              status={statuses[a.id]?.status || "idle"}
+              task={latestMessages[a.id] || undefined}
+              position={deskPos}
+              visible={hoveredAgent === a.id}
+            />
+          </group>
         );
       })}
 
-      {/* ══════ Campus Hologram ══════ */}
-      <CampusHologram />
+      {/* Dynamic Agents */}
+      <DynamicAgentZone agents={dynamicAgents} statuses={statuses} />
 
-      {/* ══════ Camera ══════ */}
-      <OrbitControls minDistance={10} maxDistance={70} target={[0, 2, 0]}
-        enablePan enableZoom enableRotate maxPolarAngle={Math.PI / 2.2} />
+      {/* ══════ Collaboration Beams ══════ */}
+      {collaborations.map((collab: CollaborationPair, i: number) => {
+        const fromPos = DESK_POSITIONS[collab.agentA];
+        const toAgent = movementStates[collab.agentB];
+        if (!fromPos) return null;
+        const from = new THREE.Vector3(fromPos[0], fromPos[1], fromPos[2]);
+        const to = toAgent
+          ? toAgent.currentPosition.clone()
+          : (() => { const p = DESK_POSITIONS[collab.agentB]; return p ? new THREE.Vector3(p[0], p[1], p[2]) : from.clone(); })();
+        return (
+          <group key={`collab-${i}`}>
+            <CollaborationBeam
+              fromPosition={from}
+              toPosition={to}
+              color={agents.find((a: CoworkAgent) => a.id === collab.agentA)?.color || "#ffffff"}
+              active={true}
+            />
+          </group>
+        );
+      })}
+
+      {/* Center hologram */}
+      <CenterHologram />
+
+      {/* Camera controls */}
+      <OrbitControls minDistance={8} maxDistance={50} target={[0, 0, 0]}
+        enablePan enableZoom enableRotate />
     </>
   );
 }
@@ -421,32 +304,15 @@ function InnerScene({
 // ═══ MAIN EXPORT ═══
 export default function CoworkOffice3D({
   agents, statuses, events,
-  animationStates = {},
-  autonomousActive = false,
-  dayNightEnabled = true,
-  weatherType = "fireflies",
 }: {
   agents: CoworkAgent[];
   statuses: Record<string, AgentStatus>;
   events: AutonomousEvent[];
-  animationStates?: Record<string, AnimationState>;
-  autonomousActive?: boolean;
-  dayNightEnabled?: boolean;
-  weatherType?: WeatherType;
 }) {
   return (
-    <Canvas camera={{ position: [0, 35, 50], fov: 50 }} shadows
+    <Canvas camera={{ position: [0, 30, 30], fov: 50 }} shadows
       style={{ width: "100%", height: "100%", background: "#060710" }}>
-      <fog attach="fog" args={["#060710", 50, 90]} />
-      <InnerScene
-        agents={agents}
-        statuses={statuses}
-        events={events}
-        animationStates={animationStates}
-        autonomousActive={autonomousActive}
-        dayNightEnabled={dayNightEnabled}
-        weatherType={weatherType}
-      />
+      <InnerScene agents={agents} statuses={statuses} events={events} />
     </Canvas>
   );
 }

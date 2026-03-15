@@ -3,16 +3,39 @@ COWORK.ARMY — Commander (task routing + dynamic agent creation)
 All functions are async for PostgreSQL compatibility.
 """
 import uuid, json
+import structlog
 from datetime import datetime
 from database import get_db
 from pathlib import Path
+from routing import SmartRouter
+
+logger = structlog.get_logger()
 
 WORKSPACE = Path(__file__).parent / "workspace"
 
+_router = SmartRouter()
+
+
+async def init_router() -> None:
+    """Fetch all agents from DB and fit the SmartRouter."""
+    db = get_db()
+    agents = await db.get_all_agents()
+    _router.fit(agents)
+    logger.info("smart_router_fitted", agent_count=len(agents))
+
 
 async def route_task(title: str, description: str) -> str:
-    """Route task to best agent using keyword triggers."""
+    """Route task to best agent using TF-IDF SmartRouter with keyword fallback."""
     text = (title + " " + description).lower()
+
+    # Try SmartRouter first
+    result = _router.route(text)
+    if result:
+        logger.info("smart_router_matched", agent_id=result["agent_id"],
+                    score=result["score"], method=result["method"])
+        return result["agent_id"]
+
+    # Fallback: keyword-based scan against live DB (handles new dynamic agents)
     db = get_db()
     agents = await db.get_all_agents()
     best_id = ""
@@ -54,8 +77,7 @@ async def delegate_task(title: str, description: str, priority: str = "normal") 
 
 
 async def create_dynamic_agent(agent_id: str, name: str, icon: str, domain: str, desc: str,
-                               skills: list, rules: list, triggers: list, system_prompt: str,
-                               owner_id: str = "") -> dict:
+                               skills: list, rules: list, triggers: list, system_prompt: str) -> dict:
     """Create a new dynamic agent with full workspace setup."""
     db = get_db()
     ws = WORKSPACE / agent_id
@@ -74,7 +96,6 @@ async def create_dynamic_agent(agent_id: str, name: str, icon: str, domain: str,
         "color": "#9ca3af", "domain": domain, "desc": desc,
         "skills": skills, "rules": rules, "triggers": triggers,
         "system_prompt": system_prompt, "workspace_dir": agent_id, "is_base": 0,
-        "owner_id": owner_id,
     }
     await db.upsert_agent(agent_data)
     await db.add_event(agent_id, f"Yeni agent oluşturuldu: {name}", "info")

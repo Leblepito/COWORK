@@ -5,45 +5,6 @@
 
 const BASE = process.env.NEXT_PUBLIC_COWORK_API_URL || "/cowork-api";
 
-// ── Auth Token Management ──
-let _authToken: string | null = null;
-
-export function setAuthToken(token: string | null) {
-  _authToken = token;
-  if (token) {
-    if (typeof window !== "undefined") localStorage.setItem("cowork_token", token);
-  } else {
-    if (typeof window !== "undefined") localStorage.removeItem("cowork_token");
-  }
-}
-
-export function getAuthToken(): string | null {
-  if (_authToken) return _authToken;
-  if (typeof window !== "undefined") {
-    _authToken = localStorage.getItem("cowork_token");
-  }
-  return _authToken;
-}
-
-function authHeaders(): Record<string, string> {
-  const token = getAuthToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  return headers;
-}
-
-// ── Auth Types ──
-export interface CoworkUser {
-  id: string; email: string; name: string; company: string;
-  avatar: string; plan: string; max_agents: number;
-  is_active: boolean; created_at: string;
-}
-
-export interface AuthResponse {
-  user: CoworkUser;
-  token: string;
-}
-
 // ── Types ──
 export interface CoworkAgent {
   id: string; name: string; icon: string; tier: string; color: string;
@@ -71,7 +32,6 @@ export interface AutonomousEvent {
 export interface AutonomousStatus {
   running: boolean; tick_count: number; total_events: number;
   agents_tracked: number; last_tick: string | null;
-  credit_error?: boolean; credit_error_message?: string;
 }
 
 export interface ServerInfo {
@@ -83,7 +43,7 @@ export interface ServerInfo {
 // ── Fetch helper ──
 async function coworkFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: authHeaders(),
+    headers: { "Content-Type": "application/json" },
     ...options,
   });
   if (!res.ok) {
@@ -91,52 +51,6 @@ async function coworkFetch<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`Cowork API error ${res.status}: ${text}`);
   }
   return res.json() as Promise<T>;
-}
-
-export function authFormHeaders(): Record<string, string> {
-  const token = getAuthToken();
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  return headers;
-}
-
-// ── Auth Endpoints ──
-export async function registerUser(email: string, password: string, name: string, company: string = ""): Promise<AuthResponse> {
-  const fd = new FormData();
-  fd.append("email", email);
-  fd.append("password", password);
-  fd.append("name", name);
-  if (company) fd.append("company", company);
-  const res = await fetch(`${BASE}/auth/register`, { method: "POST", body: fd });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({ detail: "Kayit hatasi" }));
-    throw new Error(data.detail || `API error ${res.status}`);
-  }
-  const data = await res.json() as AuthResponse;
-  setAuthToken(data.token);
-  return data;
-}
-
-export async function loginUser(email: string, password: string): Promise<AuthResponse> {
-  const fd = new FormData();
-  fd.append("email", email);
-  fd.append("password", password);
-  const res = await fetch(`${BASE}/auth/login`, { method: "POST", body: fd });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({ detail: "Giris hatasi" }));
-    throw new Error(data.detail || `API error ${res.status}`);
-  }
-  const data = await res.json() as AuthResponse;
-  setAuthToken(data.token);
-  return data;
-}
-
-export async function getCurrentUser(): Promise<CoworkUser> {
-  return coworkFetch<CoworkUser>("/auth/me");
-}
-
-export function logoutUser() {
-  setAuthToken(null);
 }
 
 // ── Agent Endpoints ──
@@ -162,7 +76,7 @@ export async function createCoworkTask(
   fd.append("description", description);
   fd.append("assigned_to", assignedTo);
   fd.append("priority", priority);
-  const res = await fetch(`${BASE}/tasks`, { method: "POST", body: fd, headers: authFormHeaders() });
+  const res = await fetch(`${BASE}/tasks`, { method: "POST", body: fd });
   if (!res.ok) throw new Error(`API error ${res.status}`);
   return res.json() as Promise<CoworkTask>;
 }
@@ -230,52 +144,6 @@ export async function setLlmProvider(provider: string): Promise<{ status: string
   return res.json();
 }
 
-// ── Animation API ──
-export interface AnimationState {
-  mood: string;
-  energy: number;
-  animation_state: Record<string, unknown>;
-}
-
-export const getAnimationStates = () =>
-  coworkFetch<Record<string, AnimationState>>("/animations/states");
-
-export async function setAgentMood(
-  agentId: string, mood: string, energy?: number
-): Promise<{ agent_id: string; mood: string; energy: number }> {
-  const fd = new FormData();
-  fd.append("mood", mood);
-  if (energy !== undefined) fd.append("energy", String(energy));
-  const res = await fetch(`${BASE}/animations/mood/${agentId}`, { method: "POST", body: fd });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-export async function triggerAnimation(
-  agentId: string, animation: string, params: Record<string, unknown> = {}
-): Promise<{ agent_id: string; animation: string; params: Record<string, unknown> }> {
-  const fd = new FormData();
-  fd.append("animation", animation);
-  fd.append("params", JSON.stringify(params));
-  const res = await fetch(`${BASE}/animations/trigger/${agentId}`, { method: "POST", body: fd });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-export async function broadcastAnimation(
-  animation: string, params: Record<string, unknown> = {}
-): Promise<{ animation: string; triggered: string[]; count: number }> {
-  const fd = new FormData();
-  fd.append("animation", animation);
-  fd.append("params", JSON.stringify(params));
-  const res = await fetch(`${BASE}/animations/broadcast`, { method: "POST", body: fd });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-export const getAnimationEvents = (limit = 20, since = "") =>
-  coworkFetch<AutonomousEvent[]>(`/animations/events?limit=${limit}&since=${encodeURIComponent(since)}`);
-
 // ── Agent CRUD (object-based interface) ──
 export interface CreateAgentInput {
   id?: string; name: string; icon: string; tier: string; color: string;
@@ -294,7 +162,7 @@ export async function createAgent(input: CreateAgentInput): Promise<CoworkAgent>
   fd.append("rules", JSON.stringify(input.rules));
   fd.append("triggers", JSON.stringify(input.triggers));
   fd.append("system_prompt", input.system_prompt);
-  const res = await fetch(`${BASE}/agents`, { method: "POST", body: fd, headers: authFormHeaders() });
+  const res = await fetch(`${BASE}/agents`, { method: "POST", body: fd });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`API error ${res.status}: ${text}`);
@@ -308,4 +176,50 @@ export async function deleteAgent(id: string): Promise<{ deleted?: boolean; stat
     throw new Error(`API error ${res.status}: ${text}`);
   }
   return res.json();
+}
+
+// ── Usage & History ──
+export interface UsageSummary {
+  period: string
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cost_usd: number
+  call_count: number
+}
+
+export interface TaskHistoryEntry {
+  old_status: string | null
+  new_status: string
+  changed_by: string
+  changed_at: string
+}
+
+export async function getUsageSummary(period = "day"): Promise<UsageSummary> {
+  return coworkFetch<UsageSummary>(`/usage/summary?period=${period}`)
+}
+
+export async function getUsageByAgent(agentId: string) {
+  return coworkFetch<Record<string, unknown>[]>(`/usage/by-agent/${agentId}`)
+}
+
+export async function getTaskHistory(taskId: string): Promise<TaskHistoryEntry[]> {
+  return coworkFetch<TaskHistoryEntry[]>(`/tasks/${taskId}/history`)
+}
+
+// ── Budget ──
+export interface BudgetStatus {
+  total: number; limit: number; percent: number; warning: boolean; exceeded: boolean
+}
+export async function getUsageBudget(): Promise<BudgetStatus> {
+  return coworkFetch<BudgetStatus>("/usage/budget")
+}
+
+// ── Filtered Tasks ──
+export async function getFilteredTasks(params: {agent?: string, status?: string, from?: string, to?: string} = {}) {
+  const qs = new URLSearchParams()
+  if (params.agent) qs.set("agent", params.agent)
+  if (params.status) qs.set("status", params.status)
+  if (params.from) qs.set("date_from", params.from)
+  if (params.to) qs.set("date_to", params.to)
+  return coworkFetch<CoworkTask[]>(`/tasks?${qs.toString()}`)
 }
