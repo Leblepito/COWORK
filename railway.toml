@@ -1,5 +1,6 @@
 # COWORK.ARMY v7.0 — Frontend Service (Railway)
 # Root Dockerfile builds frontend/ as Next.js standalone
+# Backend uses Dockerfile.backend from the same repo
 
 [build]
 builder = "dockerfile"

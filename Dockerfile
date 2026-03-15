@@ -35,3 +35,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-3333}/ || exit 1
 
 CMD ["node", "server.js"]
+
+# Force rebuild: 20260315-auth-fix

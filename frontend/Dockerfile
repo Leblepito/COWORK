@@ -25,4 +25,4 @@ EXPOSE 3333
 ENV PORT=3333
 CMD ["node", "server.js"]
 
-# Cache bust: 20260314-world-ws-fix
+# Force rebuild: 20260315-auth-fix

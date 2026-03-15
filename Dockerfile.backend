@@ -1,0 +1,27 @@
+FROM python:3.12-slim
+
+WORKDIR /srv
+
+# Copy backend requirements and install
+COPY backend/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy backend as a package (preserves relative imports)
+COPY backend/ ./backend/
+
+# Create workspace directories
+RUN mkdir -p backend/workspace
+
+# Alembic config is inside backend/
+WORKDIR /srv/backend
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8888}/api/info')" || exit 1
+
+# Run migrations then start server
+# IMPORTANT: go back to /srv so 'backend' is a proper package
+CMD cd /srv && \
+    (cd backend && alembic upgrade head 2>&1 && echo "Migrations OK" || echo "Migration skipped (non-fatal)") && \
+    python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}
+
+# Force rebuild: 20260315-auth-fix

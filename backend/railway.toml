@@ -1,9 +1,10 @@
 # COWORK.ARMY v7.0 — Backend Service (Railway)
-# Deploy backend/ as separate Railway service
+# NOTE: If using rootDirectory=backend on Railway, this file is used.
+# But the recommended approach is rootDirectory=(empty) with Dockerfile.backend at repo root.
 
 [build]
 builder = "dockerfile"
-dockerfilePath = "Dockerfile.backend"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 healthcheckPath = "/api/info"

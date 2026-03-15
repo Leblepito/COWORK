@@ -2,24 +2,23 @@ FROM python:3.12-slim
 
 WORKDIR /srv
 
-# rootDirectory=backend → build context is the backend/ folder
-# So all paths are relative to backend/
+# When rootDirectory=backend, build context is backend/ folder
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all backend source files
-COPY . ./
+# Copy all files into a 'backend' package directory
+# This preserves relative imports (from .config, from .database, etc.)
+RUN mkdir -p backend
+COPY . ./backend/
 
-# Create workspace directories
-RUN mkdir -p workspace
+# Create workspace
+RUN mkdir -p backend/workspace
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8888}/api/info')" || exit 1
 
-# Run alembic migrations then start uvicorn
-# Since rootDir=backend, we're already in the backend context
-CMD alembic upgrade head && echo "Migrations OK" || echo "Migration failed (non-fatal)"; python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8888}
+# Run migrations (from backend dir for alembic.ini) then start uvicorn (from /srv for package imports)
+CMD cd /srv/backend && (alembic upgrade head 2>&1 && echo "Migrations OK" || echo "Migration skipped") ; \
+    cd /srv && python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8888}
 
-# Cache bust: 20260313-rootdir-backend
-
-# Force rebuild: 20260313-105353
+# Force rebuild: 20260315-auth-package-fix
