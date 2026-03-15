@@ -4,32 +4,76 @@ COWORK.ARMY — Server v5 (PostgreSQL + async)
 FastAPI backend matching CLAUDE.md spec exactly.
 """
 import asyncio
-import uvicorn, os, uuid, logging
+import os
+import time
+import uuid
+import uvicorn
+import logging
+import structlog
+import json as json_module
 from pathlib import Path
-from datetime import datetime
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from sse_starlette.sse import EventSourceResponse
 
 from database import setup_db, get_db
 from database.connection import set_event_loop
 from registry import BASE_AGENTS
-from runner import spawn_agent, kill_agent, get_statuses, get_output, CREDIT_ERROR
-from commander import delegate_task, create_dynamic_agent
+from runner import spawn_agent, kill_agent, get_statuses, get_output, PROCS
+from commander import delegate_task, create_dynamic_agent, init_router
 from autonomous import autonomous
-from auth import register_user, login_user, get_current_user, require_user
-from army_templates import get_template_list, get_template
+from logging_config import configure_logging
+from middleware.error_handler import add_error_handlers
+from exceptions import NotFoundError, ValidationError, AuthError
+from env_check import validate_env
+from schemas import DelegateRequest
+from sse import broadcaster
+from cache import app_cache
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("cowork")
+logger = structlog.get_logger()
 
 BASE = Path(__file__).parent
 WORKSPACE = BASE / "workspace"
 
+MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5MB
+
+VALID_PROVIDERS = {"anthropic", "gemini"}
+
+
+def _read_env_file() -> dict:
+    """Read .env file and return as a dict."""
+    env_path = BASE / ".env"
+    result = {}
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, _, v = line.partition("=")
+                result[k.strip()] = v.strip().strip('"')
+    return result
+
+
+def _write_env_file(updates: dict) -> None:
+    """Write key-value updates to .env file (merge with existing)."""
+    env_path = BASE / ".env"
+    current = _read_env_file()
+    current.update(updates)
+    env_path.write_text("\n".join(f"{k}={v}" for k, v in current.items()) + "\n")
+ALLOWED_MIMES = {"text/plain", "application/json", "image/png", "image/jpeg", "image/gif"}
+_start_time = time.time()
+
 
 @asynccontextmanager
 async def lifespan(app):
+    # Load .env file into os.environ before anything else
+    load_dotenv(BASE / ".env", override=False)
+
+    # Validate environment variables on startup
+    validate_env()
+
     # Store event loop for sync thread access (runner threads)
     set_event_loop(asyncio.get_event_loop())
 
@@ -38,6 +82,9 @@ async def lifespan(app):
 
     # Seed base agents
     await db.seed_base_agents(BASE_AGENTS)
+
+    # Fit smart router with all agents
+    await init_router()
 
     # Setup workspace directories
     agents = await db.get_all_agents()
@@ -55,133 +102,36 @@ async def lifespan(app):
     logger.info(f"{len(agents)} agents ready")
     yield
 
+    # Shutdown — kill all active agents
+    logger.info("server_shutdown_started", active_agents=len(PROCS))
+    for agent_id, proc in list(PROCS.items()):
+        if proc.alive:
+            proc.status = "error"
+            proc.log("🛑 Server shutting down")
+            import time as _time
+            proc._finished_at = _time.time()
+            logger.info("agent_killed_on_shutdown", agent_id=agent_id)
+    PROCS.clear()
+    logger.info("server_shutdown_complete")
 
-app = FastAPI(title="COWORK.ARMY", version="5.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
 
-# ══════════════ AUTH ══════════════
-@app.post("/api/auth/register")
-async def api_register(email: str = Form(...), password: str = Form(...),
-                       name: str = Form(...), company: str = Form("")):
-    return await register_user(email, password, name, company)
+app = FastAPI(title="COWORK.ARMY", version="7.0", lifespan=lifespan)
+configure_logging()
+add_error_handlers(app)
 
-@app.post("/api/auth/login")
-async def api_login(email: str = Form(...), password: str = Form(...)):
-    return await login_user(email, password)
-
-@app.get("/api/auth/me")
-async def api_me(request: Request):
-    user = await require_user(request)
-    safe = {k: v for k, v in user.items() if k != "password_hash"}
-    return safe
-
-@app.put("/api/auth/profile")
-async def api_update_profile(request: Request, name: str = Form(""), company: str = Form(""),
-                              avatar: str = Form("")):
-    user = await require_user(request)
-    db = get_db()
-    updates = {}
-    if name: updates["name"] = name
-    if company: updates["company"] = company
-    if avatar: updates["avatar"] = avatar
-    if updates:
-        await db.update_user(user["id"], **updates)
-    updated = await db.get_user(user["id"])
-    return {k: v for k, v in updated.items() if k != "password_hash"}
-
-# ══════════════ ONBOARDING & TEMPLATES ══════════════
-@app.get("/api/templates")
-async def api_templates():
-    return get_template_list()
-
-@app.get("/api/templates/{template_id}")
-async def api_template_detail(template_id: str):
-    t = get_template(template_id)
-    if not t:
-        return JSONResponse({"detail": "Sablon bulunamadi"}, 404)
-    return t
-
-@app.post("/api/onboarding/setup")
-async def api_onboarding_setup(request: Request,
-                                template_id: str = Form(...),
-                                company_name: str = Form(""),
-                                custom_agents: str = Form("[]")):
-    """Setup user's agent army from a template."""
-    import json as _json
-
-    user = await require_user(request)
-    db = get_db()
-    template = get_template(template_id)
-    if not template:
-        return JSONResponse({"detail": "Gecersiz sablon"}, 400)
-
-    # Update company if provided
-    if company_name:
-        await db.update_user(user["id"], company=company_name)
-
-    created = []
-    for agent_def in template["agents"]:
-        agent_id = f"{user['id']}-{agent_def['suffix']}"
-        await create_dynamic_agent(
-            agent_id=agent_id,
-            name=agent_def["name"],
-            icon=agent_def["icon"],
-            domain=agent_def["domain"],
-            desc=agent_def["desc"],
-            skills=agent_def["skills"],
-            rules=agent_def["rules"],
-            triggers=agent_def["triggers"],
-            system_prompt=agent_def["system_prompt"],
-            owner_id=user["id"],
-        )
-        created.append(agent_id)
-
-    # Create CEO agent for this user
-    ceo_id = f"{user['id']}-ceo"
-    agent_names = ", ".join(a["name"] for a in template["agents"])
-    company_ctx = f" Sirket: {company_name}." if company_name else ""
-    ceo_prompt = (
-        f"Sen {user['name'] or 'kullanici'} icin calisan CEO Agent'sin.{company_ctx} "
-        f"Emrindeki agentlar: {agent_names}. "
-        "Gorevleri analiz et, uygun agentlara dagit, ilerlemeyi takip et. "
-        "Farkli gorev turleri verebilirsin:\n"
-        "- Sistem gelistirme (yeni ozellik ekleme, frontend/backend)\n"
-        "- Bug fix (hata duzeltme, debugging)\n"
-        "- SEO optimizasyonu (anahtar kelime, meta tag, sayfa hizi)\n"
-        "- Icerik uretimi (blog, sosyal medya, email)\n"
-        "- Pazarlama kampanyasi (reklam, analiz, A/B test)\n"
-        "- Veri analizi (rapor, metrik, performans)\n"
-        "- Guvenlik & DevOps (deployment, monitoring, CI/CD)\n"
-        "Her agent'in yeteneklerine gore gorev ata. "
-        "Birden fazla agent'i ayni anda calistirilabilir. "
-        "Oncelik sirasina gore gorev dagit ve sonuclari raporla."
-    )
-    await create_dynamic_agent(
-        agent_id=ceo_id, name="CEO Agent", icon="👔",
-        domain="Yonetim & Koordinasyon",
-        desc="Tum agentlari yoneten, gorev dagitan ve koordine eden ust duzey yonetici agent.",
-        skills=["task_delegation", "team_coordination", "strategic_planning",
-                "performance_monitoring", "project_management"],
-        rules=["Gorevleri agent yeteneklerine gore dagit",
-               "Ilerlemeyi duzenli takip et",
-               "Oncelik sirasina gore gorev ata"],
-        triggers=["gorev", "task", "koordine", "yonet", "manage", "plan", "proje", "project"],
-        system_prompt=ceo_prompt,
-        owner_id=user["id"],
-    )
-    created.append(ceo_id)
-
-    # Mark user as onboarded
-    await db.update_user(user["id"], plan=f"army:{template_id}")
-
-    await db.add_event(ceo_id, f"Yeni ordu kuruldu: {template['name']} ({len(created)} agent)", "info")
-
-    return {
-        "status": "ok",
-        "template": template_id,
-        "agents_created": created,
-        "count": len(created),
-    }
+from middleware.rate_limit import add_rate_limiting, limiter
+add_rate_limiting(app)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3333",
+        "https://ireska.com",
+        "https://www.ireska.com",
+        os.environ.get("FRONTEND_URL", ""),
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ══════════════ INFO ══════════════
 @app.get("/api/info")
@@ -189,43 +139,71 @@ async def api_info():
     db = get_db()
     agents = await db.get_all_agents()
     return {
-        "name": "COWORK.ARMY", "version": "5.0", "mode": "production",
+        "name": "COWORK.ARMY", "version": "7.0", "mode": "production",
         "agents": len(agents), "bridge_connected": False, "bridge_count": 0,
         "autonomous": autonomous.running, "autonomous_ticks": autonomous.tick_count,
     }
 
+
+# ══════════════ HEALTH ══════════════
+@app.get("/health")
+async def health_simple():
+    """Simple health check for load balancers and legacy clients."""
+    return {"status": "ok", "version": "7.0"}
+
+
+@app.get("/api/health")
+async def health_check():
+    db = get_db()
+    db_ok = False
+    try:
+        count = await db.get_event_count()
+        db_ok = True
+    except Exception:
+        db_ok = False
+    provider = os.environ.get("LLM_PROVIDER", "anthropic")
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "uptime_seconds": round(time.time() - _start_time, 1),
+        "database": "connected" if db_ok else "disconnected",
+        "llm_provider": provider,
+        "active_agents": len([p for p in PROCS.values() if p.alive]),
+    }
+
+
 # ══════════════ AGENTS ══════════════
 @app.get("/api/agents")
-async def api_agents(request: Request):
+async def api_agents():
+    cached = app_cache.get("agents:all")
+    if cached is not None:
+        return cached
     db = get_db()
-    user = await get_current_user(request)
-    if user:
-        return await db.get_user_agents(user["id"])
-    return await db.get_all_agents()
+    result = await db.get_all_agents()
+    app_cache.set("agents:all", result, ttl=300)
+    return result
 
 @app.get("/api/agents/{agent_id}")
 async def api_agent_detail(agent_id: str):
     db = get_db()
     a = await db.get_agent(agent_id)
-    return a if a else JSONResponse({"error": "not found"}, 404)
+    if not a: raise NotFoundError("agent", agent_id)
+    return a
 
 @app.post("/api/agents")
 async def api_create_agent(
-    request: Request,
     agent_id: str = Form(...), name: str = Form(...), icon: str = Form("🤖"),
     domain: str = Form(""), desc: str = Form(""),
     skills: str = Form(""), rules: str = Form(""), triggers: str = Form(""),
     system_prompt: str = Form("")
 ):
-    user = await get_current_user(request)
-    owner_id = user["id"] if user else ""
     result = await create_dynamic_agent(
         agent_id, name, icon, domain, desc,
         [s.strip() for s in skills.split(",") if s.strip()],
         [r.strip() for r in rules.split(",") if r.strip()],
         [t.strip() for t in triggers.split(",") if t.strip()],
-        system_prompt, owner_id=owner_id
+        system_prompt
     )
+    app_cache.delete("agents:all")
     return result
 
 @app.put("/api/agents/{agent_id}")
@@ -233,30 +211,36 @@ async def api_update_agent(agent_id: str, name: str = Form(""), icon: str = Form
                            domain: str = Form(""), desc: str = Form(""), system_prompt: str = Form("")):
     db = get_db()
     a = await db.get_agent(agent_id)
-    if not a: return JSONResponse({"error": "not found"}, 404)
+    if not a: raise NotFoundError("agent", agent_id)
     if name: a["name"] = name
     if icon: a["icon"] = icon
     if domain: a["domain"] = domain
     if desc: a["desc"] = desc
     if system_prompt: a["system_prompt"] = system_prompt
     await db.upsert_agent(a)
+    app_cache.delete("agents:all")
     return await db.get_agent(agent_id)
 
 @app.delete("/api/agents/{agent_id}")
 async def api_delete_agent(agent_id: str):
     db = get_db()
     ok = await db.delete_agent(agent_id)
+    app_cache.delete("agents:all")
     return {"deleted": ok, "agent_id": agent_id}
 
 # ══════════════ LIFECYCLE ══════════════
 @app.post("/api/agents/{agent_id}/spawn")
-async def api_spawn(agent_id: str, task: str = ""):
-    # Manual spawn from UI bypasses credit error block
-    return await spawn_agent(agent_id, task, force=True)
+@limiter.limit("10/minute")
+async def api_spawn(request: Request, agent_id: str, task: str = ""):
+    result = await spawn_agent(agent_id, task)
+    await broadcaster.broadcast("agent_status", {"agent_id": agent_id, "status": "working"})
+    return result
 
 @app.post("/api/agents/{agent_id}/kill")
 async def api_kill(agent_id: str):
-    return kill_agent(agent_id)
+    result = kill_agent(agent_id)
+    await broadcaster.broadcast("agent_status", {"agent_id": agent_id, "status": "done"})
+    return result
 
 @app.get("/api/agents/{agent_id}/output")
 async def api_output(agent_id: str):
@@ -268,9 +252,12 @@ async def api_statuses():
 
 # ══════════════ TASKS ══════════════
 @app.get("/api/tasks")
-async def api_tasks():
+async def api_tasks(agent: str = "", status: str = "", date_from: str = "", date_to: str = ""):
     db = get_db()
-    return await db.list_tasks()
+    return await db.list_tasks(
+        agent=agent or None, status=status or None,
+        date_from=date_from or None, date_to=date_to or None,
+    )
 
 @app.post("/api/tasks")
 async def api_create_task(title: str = Form(...), description: str = Form(""),
@@ -278,13 +265,74 @@ async def api_create_task(title: str = Form(...), description: str = Form(""),
     if assigned_to:
         db = get_db()
         tid = f"TASK-{uuid.uuid4().hex[:8].upper()}"
-        return await db.create_task(tid, title, description, assigned_to, priority, "user", "pending", [])
-    return await delegate_task(title, description, priority)
+        result = await db.create_task(tid, title, description, assigned_to, priority, "user", "pending", [])
+        await broadcaster.broadcast("task_update", {"status": "created"})
+        return result
+    result = await delegate_task(title, description, priority)
+    await broadcaster.broadcast("task_update", {"status": "created"})
+    return result
+
+@app.put("/api/tasks/{task_id}")
+async def api_update_task(task_id: str, status: str = Form(""), log_message: str = Form("")):
+    db = get_db()
+    t = await db.get_task(task_id)
+    if not t:
+        raise NotFoundError("task", task_id)
+    updates = {}
+    old_status = t.get("status")
+    if status:
+        updates["status"] = status
+    if log_message:
+        log = t.get("log", []) or []
+        log.append(log_message)
+        updates["log"] = log
+    if updates:
+        await db.update_task(task_id, **updates)
+        if "status" in updates and updates["status"] != old_status:
+            try:
+                await db.record_task_transition(task_id, old_status, updates["status"], "user")
+            except Exception as e:
+                logger.warning("task_transition_record_failed", error=str(e))
+    return await db.get_task(task_id)
+
+# ══════════════ USAGE & HISTORY ══════════════
+@app.get("/api/usage/summary")
+async def usage_summary(period: str = "day"):
+    db = get_db()
+    return await db.get_usage_summary(period)
+
+@app.get("/api/usage/by-agent/{agent_id}")
+async def usage_by_agent(agent_id: str):
+    db = get_db()
+    return await db.get_usage_by_agent(agent_id)
+
+@app.get("/api/tasks/{task_id}/history")
+async def task_history(task_id: str):
+    db = get_db()
+    return await db.get_task_history(task_id)
+
+# ══════════════ BUDGET ══════════════
+@app.get("/api/usage/budget")
+async def usage_budget():
+    db = get_db()
+    daily = await db.get_daily_spend()
+    from cost_tracking import get_budget_status
+    return get_budget_status(daily)
+
+@app.post("/api/settings/budget")
+async def set_budget(request: Request):
+    form = await request.form()
+    limit = float(form.get("limit", "10.0"))
+    if limit < 0:
+        raise ValidationError("Budget limit must be >= 0")
+    os.environ["LLM_BUDGET_LIMIT_USD"] = str(limit)
+    return {"status": "updated", "limit": limit}
 
 # ══════════════ COMMANDER ══════════════
 @app.post("/api/commander/delegate")
-async def api_delegate(title: str = Form(...), description: str = Form(""), priority: str = Form("normal")):
-    return await delegate_task(title, description, priority)
+async def api_delegate(body: DelegateRequest):
+    result = await delegate_task(body.task, "", "normal")
+    return result
 
 # ══════════════ AUTONOMOUS ══════════════
 @app.post("/api/autonomous/start")
@@ -306,153 +354,85 @@ async def api_auto_events(limit: int = 50, since: str = ""):
     db = get_db()
     return await db.get_events(limit, since)
 
-# ══════════════ SETTINGS (Multi-Provider) ══════════════
+# ══════════════ SSE EVENTS ══════════════
+@app.get("/api/events/stream")
+async def event_stream(request: Request):
+    # Optional auth via query param
+    token = request.query_params.get("token")
+    if token:
+        from middleware.auth import verify_token
+        if verify_token(token) is None:
+            raise AuthError("Invalid or expired token")
 
-def _read_env_key(key_name: str) -> str:
-    """Read a key from environment or .env file."""
-    v = os.environ.get(key_name, "")
-    if not v:
-        env = BASE / ".env"
-        if env.exists():
-            for line in env.read_text().splitlines():
-                if line.startswith(f"{key_name}="):
-                    v = line.split("=", 1)[1].strip().strip('"')
-    return v
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    if not broadcaster.subscribe(queue):
+        raise ValidationError("Too many SSE connections (max 100)")
 
-def _set_env_key(key_name: str, value: str):
-    """Set a key in .env file and os.environ."""
-    env = BASE / ".env"
-    lines = []
-    if env.exists():
-        lines = [l for l in env.read_text().splitlines() if not l.startswith(f"{key_name}=")]
-    lines.append(f"{key_name}={value}")
-    env.write_text("\n".join(lines) + "\n")
-    os.environ[key_name] = value
+    async def generate():
+        try:
+            yield {"event": "connected", "data": json_module.dumps({"status": "connected"})}
+            while True:
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield {"event": msg["event"], "data": json_module.dumps(msg["data"])}
+                except asyncio.TimeoutError:
+                    yield {"event": "heartbeat", "data": json_module.dumps({"ts": 0})}
+        except asyncio.CancelledError:
+            pass
+        finally:
+            broadcaster.unsubscribe(queue)
 
+    return EventSourceResponse(generate())
+
+
+# ══════════════ SETTINGS ══════════════
 @app.get("/api/settings/api-key-status")
 async def api_key_status():
-    anthropic_key = _read_env_key("ANTHROPIC_API_KEY")
-    gemini_key = _read_env_key("GEMINI_API_KEY")
-    active_provider = _read_env_key("LLM_PROVIDER") or "anthropic"
-    return {
-        "anthropic": {"set": bool(anthropic_key), "preview": (anthropic_key[:12] + "...") if anthropic_key else ""},
-        "gemini": {"set": bool(gemini_key), "preview": (gemini_key[:12] + "...") if gemini_key else ""},
+    cached = app_cache.get("settings:provider_config")
+    if cached is not None:
+        return cached
+    active_provider = os.environ.get("LLM_PROVIDER", "anthropic")
+    ant_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    gem_key = os.environ.get("GEMINI_API_KEY", "")
+    result = {
         "active_provider": active_provider,
-        # Backward compat
-        "set": bool(anthropic_key) if active_provider == "anthropic" else bool(gemini_key),
-        "preview": (anthropic_key[:12] + "...") if active_provider == "anthropic" and anthropic_key else (gemini_key[:12] + "...") if gemini_key else "",
+        "set": bool(ant_key if active_provider == "anthropic" else gem_key),
+        "preview": (ant_key[:12] + "...") if ant_key else "",
+        "anthropic": {"set": bool(ant_key), "preview": (ant_key[:12] + "...") if ant_key else ""},
+        "gemini": {"set": bool(gem_key), "preview": (gem_key[:12] + "...") if gem_key else ""},
     }
+    app_cache.set("settings:provider_config", result, ttl=600)
+    return result
 
 @app.post("/api/settings/api-key")
 async def api_set_key(key: str = Form(...), provider: str = Form("anthropic")):
-    if provider == "gemini":
-        _set_env_key("GEMINI_API_KEY", key)
-    else:
-        _set_env_key("ANTHROPIC_API_KEY", key)
-    # Reset credit error flag so agents can retry with new key
-    CREDIT_ERROR["active"] = False
-    CREDIT_ERROR["message"] = ""
-    return {"status": "saved", "provider": provider, "preview": key[:12] + "..."}
+    env_key = "GEMINI_API_KEY" if provider == "gemini" else "ANTHROPIC_API_KEY"
+    _write_env_file({env_key: key})
+    os.environ[env_key] = key
+    app_cache.delete("settings:provider_config")
+    return {"status": "saved", "preview": key[:12] + "...", "provider": provider}
 
 @app.get("/api/settings/llm-provider")
-async def api_get_provider():
-    provider = _read_env_key("LLM_PROVIDER") or "anthropic"
+async def api_get_llm_provider():
+    provider = os.environ.get("LLM_PROVIDER", "anthropic")
     return {"provider": provider}
 
 @app.post("/api/settings/llm-provider")
-async def api_set_provider(provider: str = Form(...)):
-    if provider not in ("anthropic", "gemini"):
-        return JSONResponse({"error": "Invalid provider. Use 'anthropic' or 'gemini'."}, 400)
-    _set_env_key("LLM_PROVIDER", provider)
-    # Reset credit error when switching provider
-    CREDIT_ERROR["active"] = False
-    CREDIT_ERROR["message"] = ""
-    return {"status": "ok", "provider": provider}
-
-# ══════════════ ANIMATION ══════════════
-@app.get("/api/animations/states")
-async def api_animation_states():
-    """Get all agents' mood, energy, and animation state."""
-    db = get_db()
-    agents = await db.get_all_agents()
-    return {
-        a["id"]: {
-            "mood": a.get("mood", "neutral"),
-            "energy": a.get("energy", 100),
-            "animation_state": a.get("animation_state", {}),
-        }
-        for a in agents
-    }
-
-@app.post("/api/animations/mood/{agent_id}")
-async def api_set_mood(agent_id: str, mood: str = Form(...), energy: int = Form(None)):
-    """Set agent mood and energy level. Moods: neutral, happy, focused, stressed, excited, tired."""
-    db = get_db()
-    a = await db.get_agent(agent_id)
-    if not a:
-        return JSONResponse({"error": "not found"}, 404)
-    valid_moods = ["neutral", "happy", "focused", "stressed", "excited", "tired", "celebrating"]
-    if mood not in valid_moods:
-        return JSONResponse({"error": f"Invalid mood. Valid: {valid_moods}"}, 400)
-    await db.update_agent_mood(agent_id, mood, energy)
-    await db.add_animation_event(agent_id, "mood_change", {"mood": mood, "energy": energy})
-    return {"agent_id": agent_id, "mood": mood, "energy": energy}
-
-@app.post("/api/animations/trigger/{agent_id}")
-async def api_trigger_animation(agent_id: str, animation: str = Form(...), params: str = Form("{}")):
-    """Trigger a specific animation on an agent.
-    Animations: spawn, despawn, celebrate, alert, power_up, shake, teleport.
-    """
-    import json as _json
-    db = get_db()
-    a = await db.get_agent(agent_id)
-    if not a:
-        return JSONResponse({"error": "not found"}, 404)
-    valid_anims = ["spawn", "despawn", "celebrate", "alert", "power_up", "shake", "teleport"]
-    if animation not in valid_anims:
-        return JSONResponse({"error": f"Invalid animation. Valid: {valid_anims}"}, 400)
-    try:
-        anim_params = _json.loads(params)
-    except _json.JSONDecodeError:
-        anim_params = {}
-    anim_data = {"animation": animation, "params": anim_params, "triggered_at": datetime.now().isoformat()}
-    await db.update_agent_animation_state(agent_id, anim_data)
-    await db.add_animation_event(agent_id, animation, anim_data)
-    return {"agent_id": agent_id, "animation": animation, "params": anim_params}
-
-@app.get("/api/animations/events")
-async def api_animation_events(limit: int = 20, since: str = ""):
-    """Get recent animation events."""
-    db = get_db()
-    return await db.get_animation_events(limit, since)
-
-@app.post("/api/animations/broadcast")
-async def api_broadcast_animation(animation: str = Form(...), params: str = Form("{}")):
-    """Trigger an animation on ALL agents (e.g., celebrate, alert)."""
-    import json as _json
-    db = get_db()
-    agents = await db.get_all_agents()
-    valid_anims = ["celebrate", "alert", "power_up", "shake"]
-    if animation not in valid_anims:
-        return JSONResponse({"error": f"Invalid broadcast animation. Valid: {valid_anims}"}, 400)
-    try:
-        anim_params = _json.loads(params)
-    except _json.JSONDecodeError:
-        anim_params = {}
-    triggered = []
-    for a in agents:
-        anim_data = {"animation": animation, "params": anim_params, "triggered_at": datetime.now().isoformat()}
-        await db.update_agent_animation_state(a["id"], anim_data)
-        await db.add_animation_event(a["id"], animation, anim_data)
-        triggered.append(a["id"])
-    return {"animation": animation, "triggered": triggered, "count": len(triggered)}
+async def api_set_llm_provider(provider: str = Form(...)):
+    if provider not in VALID_PROVIDERS:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Invalid provider '{provider}'. Valid: {', '.join(VALID_PROVIDERS)}")
+    _write_env_file({"LLM_PROVIDER": provider})
+    os.environ["LLM_PROVIDER"] = provider
+    app_cache.delete("settings:provider_config")
+    return {"provider": provider, "status": "saved"}
 
 # ══════════════ WORKSPACE ══════════════
 @app.get("/api/workspace/{agent_id}")
 async def api_workspace(agent_id: str):
     db = get_db()
     a = await db.get_agent(agent_id)
-    if not a: return JSONResponse({"error": "not found"}, 404)
+    if not a: raise NotFoundError("agent", agent_id)
     ws = WORKSPACE / a["workspace_dir"]
     files = []
     if ws.exists():
@@ -465,15 +445,23 @@ async def api_workspace(agent_id: str):
 async def api_ws_file(agent_id: str, path: str = ""):
     db = get_db()
     a = await db.get_agent(agent_id)
-    if not a: return JSONResponse({"error": "not found"}, 404)
+    if not a: raise NotFoundError("agent", agent_id)
     fp = WORKSPACE / a["workspace_dir"] / path
-    if not fp.exists(): return JSONResponse({"error": "file not found"}, 404)
+    if not fp.exists(): raise NotFoundError("file", path)
     try: return {"path": path, "content": fp.read_text()[:50000]}
-    except: return {"path": path, "content": "[binary]", "size": fp.stat().st_size}
+    except (UnicodeDecodeError, OSError) as e:
+        return {"path": path, "content": "[binary]", "size": fp.stat().st_size}
 
 # ══════════════ COURIER UPLOAD ══════════════
 @app.post("/api/courier/upload")
-async def api_upload(file: UploadFile = File(...)):
+@limiter.limit("5/minute")
+async def api_upload(request: Request, file: UploadFile = File(...)):
+    if file.content_type and file.content_type not in ALLOWED_MIMES:
+        raise ValidationError(f"File type '{file.content_type}' not allowed")
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise ValidationError(f"File too large: {len(content)} bytes (max {MAX_UPLOAD_SIZE})")
+    await file.seek(0)
     inbox = WORKSPACE / "supervisor" / "inbox"
     inbox.mkdir(parents=True, exist_ok=True)
     dest = inbox / file.filename

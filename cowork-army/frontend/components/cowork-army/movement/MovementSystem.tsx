@@ -39,6 +39,7 @@ export function useMovementSystem(
 ): Record<string, AgentMovementState> {
     const statesRef = useRef<Record<string, InternalMoveState>>({});
     const outputRef = useRef<Record<string, AgentMovementState>>({});
+    const pathCacheRef = useRef<Record<string, { forward: ReturnType<typeof calculatePath>; return: ReturnType<typeof calculatePath> }>>({});
 
     // Initialize missing agents
     for (const id of agentIds) {
@@ -67,13 +68,18 @@ export function useMovementSystem(
             const toPos = DESK_POSITIONS[collab.agentA] || DEFAULT_POSITION;
             // Offset target slightly so they stand next to the desk, not on it
             const target: [number, number, number] = [toPos[0] + 0.8, toPos[1], toPos[2]];
+            const cacheKey = `${collab.agentB}-${collab.agentA}`;
+            if (!pathCacheRef.current[cacheKey]) {
+                const from: [number, number, number] = [fromPos[0], fromPos[1], fromPos[2] - 0.3];
+                pathCacheRef.current[cacheKey] = {
+                    forward: calculatePath(from, target),
+                    return: calculatePath(target, [fromPos[0], fromPos[1], fromPos[2] - 0.3]),
+                };
+            }
             state.phase = "walking_to";
             state.progress = 0;
             state.targetAgentId = collab.agentA;
-            state.pathForward = calculatePath(
-                [fromPos[0], fromPos[1], fromPos[2] - 0.3],
-                target,
-            );
+            state.pathForward = pathCacheRef.current[cacheKey].forward;
             state.pathReturn = null;
         }
     }

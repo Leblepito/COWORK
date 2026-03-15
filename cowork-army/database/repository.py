@@ -3,11 +3,28 @@ COWORK.ARMY — Database Repository (async CRUD operations)
 Replaces old database.py with async PostgreSQL operations.
 Returns dicts in the same format as before for backward compatibility.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from functools import wraps
 from sqlalchemy import select, delete, update, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from .models import Agent, Task, Event, User
+from sqlalchemy.exc import OperationalError, InterfaceError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from .models import Agent, Task, Event, LlmUsage, TaskHistory
+
+
+def db_retry(func):
+    """Tenacity retry decorator for transient DB errors (OperationalError, InterfaceError)."""
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+        retry=retry_if_exception_type((OperationalError, InterfaceError)),
+        reraise=True,
+    )
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        return await func(*args, **kwargs)
+    return wrapper
 
 
 class Database:
@@ -33,10 +50,6 @@ class Database:
                 system_prompt=a.get("system_prompt", ""),
                 workspace_dir=a.get("workspace_dir", a["id"]),
                 is_base=bool(a.get("is_base", False)),
-                owner_id=a.get("owner_id", ""),
-                mood=a.get("mood", "neutral"),
-                energy=a.get("energy", 100),
-                animation_state=a.get("animation_state", {}),
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["id"],
@@ -53,16 +66,13 @@ class Database:
                     "system_prompt": stmt.excluded.system_prompt,
                     "workspace_dir": stmt.excluded.workspace_dir,
                     "is_base": stmt.excluded.is_base,
-                    "owner_id": stmt.excluded.owner_id,
-                    "mood": stmt.excluded.mood,
-                    "energy": stmt.excluded.energy,
-                    "animation_state": stmt.excluded.animation_state,
                     "updated_at": datetime.now(timezone.utc),
                 },
             )
             await session.execute(stmt)
             await session.commit()
 
+    @db_retry
     async def get_all_agents(self) -> list[dict]:
         """Get all agents, base first, then by created_at."""
         async with self._sf() as session:
@@ -71,6 +81,7 @@ class Database:
             )
             return [self._agent_to_dict(a) for a in result.scalars().all()]
 
+    @db_retry
     async def get_agent(self, agent_id: str) -> dict | None:
         """Get a single agent by ID."""
         async with self._sf() as session:
@@ -106,12 +117,28 @@ class Database:
             await session.commit()
         return await self.get_task(task_id)
 
-    async def list_tasks(self, limit: int = 100) -> list[dict]:
-        """List tasks ordered by creation date."""
+    async def list_tasks(self, limit: int = 100, agent: str | None = None,
+                         status: str | None = None, date_from: str | None = None,
+                         date_to: str | None = None) -> list[dict]:
+        """List tasks ordered by creation date, with optional filters."""
         async with self._sf() as session:
-            result = await session.execute(
-                select(Task).order_by(Task.created_at.desc()).limit(limit)
-            )
+            query = select(Task)
+            if agent:
+                query = query.where(Task.assigned_to == agent)
+            if status:
+                query = query.where(Task.status == status)
+            if date_from:
+                try:
+                    query = query.where(Task.created_at >= datetime.fromisoformat(date_from))
+                except ValueError:
+                    pass
+            if date_to:
+                try:
+                    query = query.where(Task.created_at <= datetime.fromisoformat(date_to))
+                except ValueError:
+                    pass
+            query = query.order_by(Task.created_at.desc()).limit(limit)
+            result = await session.execute(query)
             return [self._task_to_dict(t) for t in result.scalars().all()]
 
     async def get_task(self, task_id: str) -> dict | None:
@@ -161,6 +188,131 @@ class Database:
             result = await session.execute(select(func.count(Event.id)))
             return result.scalar() or 0
 
+    async def purge_old_events(self, days: int = 7) -> int:
+        """Delete events older than `days` days. Returns row count deleted."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        async with self._sf() as session:
+            result = await session.execute(delete(Event).where(Event.timestamp < cutoff))
+            await session.commit()
+            return result.rowcount
+
+    async def get_agent_ids_and_status(self) -> list[dict]:
+        """Selective query: return only id, name, is_base for all agents (lightweight)."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(Agent.id, Agent.name, Agent.is_base).order_by(Agent.is_base.desc(), Agent.created_at)
+            )
+            return [{"id": row.id, "name": row.name, "is_base": row.is_base} for row in result.all()]
+
+    async def create_task_with_event(self, task_id: str, title: str, desc: str, assigned_to: str,
+                                     priority: str, created_by: str, status: str, log: list) -> dict:
+        """Create task + matching event atomically in a single transaction."""
+        async with self._sf() as session:
+            async with session.begin():
+                now = datetime.now(timezone.utc)
+                task = Task(
+                    id=task_id, title=title, description=desc,
+                    assigned_to=assigned_to, priority=priority,
+                    status=status, created_by=created_by,
+                    created_at=now, updated_at=now, log=log,
+                )
+                session.add(task)
+                event = Event(
+                    agent_id=assigned_to,
+                    message=f"Görev oluşturuldu: {title[:60]}",
+                    type="task_created",
+                    timestamp=now,
+                )
+                session.add(event)
+        return await self.get_task(task_id)
+
+    # ── LLM Usage ──
+
+    async def record_llm_usage(self, agent_id, provider, model, input_tokens, output_tokens, cost_usd):
+        async with self._sf() as session:
+            session.add(LlmUsage(
+                agent_id=agent_id, provider=provider, model=model,
+                input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost_usd,
+            ))
+            await session.commit()
+
+    async def get_daily_spend(self) -> float:
+        """Return total LLM spend (USD) for today."""
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        async with self._sf() as session:
+            result = await session.execute(
+                select(func.coalesce(func.sum(LlmUsage.cost_usd), 0)).where(LlmUsage.timestamp >= today_start)
+            )
+            return float(result.scalar())
+
+    async def get_usage_summary(self, period="day"):
+        delta = {"day": 1, "week": 7, "month": 30}.get(period, 1)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=delta)
+        async with self._sf() as session:
+            result = await session.execute(
+                select(
+                    func.sum(LlmUsage.input_tokens).label("ti"),
+                    func.sum(LlmUsage.output_tokens).label("to"),
+                    func.sum(LlmUsage.cost_usd).label("tc"),
+                    func.count(LlmUsage.id).label("cc"),
+                ).where(LlmUsage.timestamp >= cutoff)
+            )
+            row = result.one()
+            return {
+                "period": period,
+                "total_input_tokens": int(row.ti or 0),
+                "total_output_tokens": int(row.to or 0),
+                "total_cost_usd": float(row.tc or 0),
+                "call_count": int(row.cc or 0),
+            }
+
+    async def get_usage_by_agent(self, agent_id):
+        async with self._sf() as session:
+            result = await session.execute(
+                select(LlmUsage)
+                .where(LlmUsage.agent_id == agent_id)
+                .order_by(LlmUsage.timestamp.desc())
+                .limit(100)
+            )
+            return [
+                {
+                    "provider": r.provider,
+                    "model": r.model,
+                    "input_tokens": r.input_tokens,
+                    "output_tokens": r.output_tokens,
+                    "cost_usd": float(r.cost_usd),
+                    "timestamp": r.timestamp.isoformat(),
+                }
+                for r in result.scalars().all()
+            ]
+
+    # ── Task History ──
+
+    async def record_task_transition(self, task_id, old_status, new_status, changed_by="system"):
+        async with self._sf() as session:
+            session.add(TaskHistory(
+                task_id=task_id, old_status=old_status,
+                new_status=new_status, changed_by=changed_by,
+            ))
+            await session.commit()
+
+    async def get_task_history(self, task_id):
+        async with self._sf() as session:
+            result = await session.execute(
+                select(TaskHistory)
+                .where(TaskHistory.task_id == task_id)
+                .order_by(TaskHistory.changed_at.asc())
+            )
+            return [
+                {
+                    "old_status": r.old_status,
+                    "new_status": r.new_status,
+                    "changed_by": r.changed_by,
+                    "changed_at": r.changed_at.isoformat(),
+                }
+                for r in result.scalars().all()
+            ]
+
     # ── Seed ──
 
     async def seed_base_agents(self, agents: list[dict]):
@@ -168,126 +320,7 @@ class Database:
         for a in agents:
             await self.upsert_agent(a)
 
-    # ── Users ──
-
-    async def create_user(self, user_id: str, email: str, password_hash: str,
-                          name: str, company: str = "") -> dict:
-        """Create a new user."""
-        async with self._sf() as session:
-            user = User(
-                id=user_id, email=email, password_hash=password_hash,
-                name=name, company=company,
-            )
-            session.add(user)
-            await session.commit()
-        return await self.get_user(user_id)
-
-    async def get_user(self, user_id: str) -> dict | None:
-        """Get user by ID."""
-        async with self._sf() as session:
-            result = await session.execute(
-                select(User).where(User.id == user_id)
-            )
-            user = result.scalar_one_or_none()
-            return self._user_to_dict(user) if user else None
-
-    async def get_user_by_email(self, email: str) -> dict | None:
-        """Get user by email (for login)."""
-        async with self._sf() as session:
-            result = await session.execute(
-                select(User).where(User.email == email)
-            )
-            user = result.scalar_one_or_none()
-            return self._user_to_dict(user) if user else None
-
-    async def get_user_password_hash(self, email: str) -> str | None:
-        """Get password hash for verification."""
-        async with self._sf() as session:
-            result = await session.execute(
-                select(User.password_hash).where(User.email == email)
-            )
-            row = result.scalar_one_or_none()
-            return row
-
-    async def update_user(self, user_id: str, **kwargs):
-        """Update user fields."""
-        async with self._sf() as session:
-            kwargs["updated_at"] = datetime.now(timezone.utc)
-            await session.execute(
-                update(User).where(User.id == user_id).values(**kwargs)
-            )
-            await session.commit()
-
-    async def get_user_agents(self, user_id: str) -> list[dict]:
-        """Get agents owned by a user (includes base agents)."""
-        async with self._sf() as session:
-            result = await session.execute(
-                select(Agent).where(
-                    (Agent.owner_id == user_id) | (Agent.is_base == True)
-                ).order_by(Agent.is_base.desc(), Agent.created_at)
-            )
-            return [self._agent_to_dict(a) for a in result.scalars().all()]
-
     # ── Dict converters (backward compatibility) ──
-
-    async def update_agent_mood(self, agent_id: str, mood: str, energy: int | None = None):
-        """Update agent mood and optionally energy."""
-        async with self._sf() as session:
-            values: dict = {"mood": mood, "updated_at": datetime.now(timezone.utc)}
-            if energy is not None:
-                values["energy"] = max(0, min(100, energy))
-            await session.execute(
-                update(Agent).where(Agent.id == agent_id).values(**values)
-            )
-            await session.commit()
-
-    async def update_agent_animation_state(self, agent_id: str, animation_state: dict):
-        """Update agent animation state (custom animation triggers)."""
-        async with self._sf() as session:
-            await session.execute(
-                update(Agent).where(Agent.id == agent_id).values(
-                    animation_state=animation_state,
-                    updated_at=datetime.now(timezone.utc),
-                )
-            )
-            await session.commit()
-
-    async def add_animation_event(self, agent_id: str, animation_type: str, animation_data: dict):
-        """Add an animation-specific event."""
-        async with self._sf() as session:
-            event = Event(
-                agent_id=agent_id,
-                message=f"animation:{animation_type}",
-                type="animation",
-                animation_data=animation_data,
-            )
-            session.add(event)
-            await session.commit()
-
-    async def get_animation_events(self, limit: int = 20, since: str = "") -> list[dict]:
-        """Get recent animation events."""
-        async with self._sf() as session:
-            query = select(Event).where(Event.type == "animation")
-            if since:
-                try:
-                    since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-                    query = query.where(Event.timestamp > since_dt)
-                except ValueError:
-                    pass
-            query = query.order_by(Event.id.desc()).limit(limit)
-            result = await session.execute(query)
-            return [self._event_to_dict(e) for e in result.scalars().all()]
-
-    @staticmethod
-    def _user_to_dict(u: User) -> dict:
-        return {
-            "id": u.id, "email": u.email, "name": u.name,
-            "company": u.company, "avatar": u.avatar,
-            "plan": u.plan, "max_agents": u.max_agents,
-            "is_active": u.is_active,
-            "password_hash": u.password_hash,
-            "created_at": u.created_at.isoformat() if u.created_at else "",
-        }
 
     @staticmethod
     def _agent_to_dict(a: Agent) -> dict:
@@ -297,9 +330,6 @@ class Database:
             "skills": a.skills or [], "rules": a.rules or [],
             "triggers": a.triggers or [], "system_prompt": a.system_prompt,
             "workspace_dir": a.workspace_dir, "is_base": a.is_base,
-            "owner_id": getattr(a, "owner_id", ""),
-            "mood": a.mood or "neutral", "energy": a.energy if a.energy is not None else 100,
-            "animation_state": a.animation_state or {},
             "created_at": a.created_at.isoformat() if a.created_at else "",
         }
 
@@ -319,5 +349,4 @@ class Database:
         return {
             "timestamp": e.timestamp.isoformat() if e.timestamp else "",
             "agent_id": e.agent_id, "message": e.message, "type": e.type,
-            "animation_data": e.animation_data or {},
         }

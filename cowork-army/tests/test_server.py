@@ -48,9 +48,13 @@ def mock_auto():
 @pytest.fixture
 def app_client(mock_db, mock_auto):
     """Create a TestClient with all server dependencies mocked."""
+    # Clear in-memory cache before each test to avoid stale data
+    from cache import app_cache
+    app_cache.clear()
     with patch("server.setup_db", new_callable=AsyncMock, return_value=mock_db), \
          patch("server.get_db", return_value=mock_db), \
          patch("server.set_event_loop"), \
+         patch("server.init_router", new_callable=AsyncMock), \
          patch("server.autonomous", mock_auto), \
          patch("server.spawn_agent", new_callable=AsyncMock,
                return_value={"status": "thinking", "agent_id": "test", "lines": [], "alive": True, "pid": 0, "started_at": ""}), \
@@ -242,11 +246,10 @@ class TestTasks:
 class TestCommanderEndpoint:
     def test_delegate(self, app_client):
         c, _, _ = app_client
-        r = c.post("/api/commander/delegate", data={
-            "title": "Test task", "description": "Test desc", "priority": "high",
+        r = c.post("/api/commander/delegate", json={
+            "task": "Test task description",
         })
         assert r.status_code == 200
-        assert "id" in r.json()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -289,8 +292,7 @@ class TestAutonomous:
 class TestSettings:
     def test_api_key_status_with_env(self, app_client):
         c, _, _ = app_client
-        with patch("server._read_env_file", return_value={}), \
-             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-test-key-12345"}, clear=False):
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-test-key-12345", "LLM_PROVIDER": "anthropic"}, clear=False):
             r = c.get("/api/settings/api-key-status")
             assert r.status_code == 200
             data = r.json()
@@ -299,8 +301,7 @@ class TestSettings:
 
     def test_api_key_status_gemini(self, app_client):
         c, _, _ = app_client
-        with patch("server._read_env_file", return_value={}), \
-             patch.dict("os.environ", {"LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "gk-test-key-12345"}):
+        with patch.dict("os.environ", {"LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "gk-test-key-12345"}, clear=False):
             r = c.get("/api/settings/api-key-status")
             assert r.status_code == 200
             data = r.json()

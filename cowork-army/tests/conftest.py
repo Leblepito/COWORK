@@ -1,4 +1,15 @@
 """Shared fixtures for COWORK.ARMY v7 tests."""
+import sys
+import os
+from pathlib import Path
+
+_root = Path(__file__).parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+os.environ.setdefault("COWORK_JWT_SECRET", "test-secret-key")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://cowork:cowork@localhost:5433/cowork_army")
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from contextlib import asynccontextmanager

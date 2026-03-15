@@ -1,8 +1,8 @@
 """
-COWORK.ARMY — SQLAlchemy ORM Models (agents, tasks, events)
+COWORK.ARMY — SQLAlchemy ORM Models (agents, tasks, events, llm_usage, task_history)
 """
 from datetime import datetime, timezone
-from sqlalchemy import String, Boolean, Text, Integer, Index, JSON, DateTime
+from sqlalchemy import String, Boolean, Text, Integer, Index, JSON, DateTime, Numeric
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 TIMESTAMPTZ = DateTime(timezone=True)
@@ -14,26 +14,6 @@ def _utcnow():
 
 class Base(DeclarativeBase):
     pass
-
-
-class User(Base):
-    __tablename__ = "users"
-
-    id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
-    company: Mapped[str] = mapped_column(String(200), default="")
-    avatar: Mapped[str] = mapped_column(String(10), default="👤")
-    plan: Mapped[str] = mapped_column(String(30), default="free")
-    max_agents: Mapped[int] = mapped_column(Integer, default=5)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow, onupdate=_utcnow)
-
-    __table_args__ = (
-        Index("ix_users_email", "email", unique=True),
-    )
 
 
 class Agent(Base):
@@ -52,10 +32,6 @@ class Agent(Base):
     system_prompt: Mapped[str] = mapped_column(Text, default="")
     workspace_dir: Mapped[str] = mapped_column(String(200), default="")
     is_base: Mapped[bool] = mapped_column(Boolean, default=False)
-    owner_id: Mapped[str] = mapped_column(String(100), default="", index=True)
-    mood: Mapped[str] = mapped_column(String(30), default="neutral")
-    energy: Mapped[int] = mapped_column(Integer, default=100)
-    animation_state: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow, onupdate=_utcnow)
 
@@ -70,7 +46,7 @@ class Task(Base):
     priority: Mapped[str] = mapped_column(String(20), default="normal")
     status: Mapped[str] = mapped_column(String(30), default="pending")
     created_by: Mapped[str] = mapped_column(String(100), default="user")
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow, onupdate=_utcnow)
     log: Mapped[list] = mapped_column(JSON, default=list)
 
@@ -85,11 +61,44 @@ class Event(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     timestamp: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
-    agent_id: Mapped[str] = mapped_column(String(100), default="")
+    agent_id: Mapped[str] = mapped_column(String(100), default="", index=True)
     message: Mapped[str] = mapped_column(Text, default="")
     type: Mapped[str] = mapped_column(String(30), default="info")
-    animation_data: Mapped[dict] = mapped_column(JSON, default=dict)
 
     __table_args__ = (
         Index("ix_events_timestamp", "timestamp"),
+    )
+
+
+class LlmUsage(Base):
+    __tablename__ = "llm_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[str] = mapped_column(String(100), nullable=True)
+    provider: Mapped[str] = mapped_column(String(30), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd: Mapped[float] = mapped_column(Numeric(10, 6), nullable=False, default=0)
+    timestamp: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
+
+    __table_args__ = (
+        Index("ix_llm_usage_agent_ts", "agent_id", "timestamp"),
+        Index("ix_llm_usage_ts", "timestamp"),
+    )
+
+
+class TaskHistory(Base):
+    __tablename__ = "task_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    old_status: Mapped[str] = mapped_column(String(30), nullable=True)
+    new_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    changed_by: Mapped[str] = mapped_column(String(100), default="system")
+    changed_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
+
+    __table_args__ = (
+        Index("ix_task_history_task", "task_id"),
+        Index("ix_task_history_ts", "changed_at"),
     )

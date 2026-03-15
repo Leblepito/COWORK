@@ -1,7 +1,6 @@
 "use client";
 
-import { useRef } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useRef, useMemo } from "react";
 import * as THREE from "three";
 import type { CharacterDef } from "./character-registry";
 import {
@@ -37,7 +36,6 @@ interface CharacterBuilderProps {
     status: string;
     facingAngle?: number;
     walkPhase?: number;
-    mood?: string;
 }
 
 const ACCESSORY_MAP: Record<string, React.FC<{ color: string; scale?: number }>> = {
@@ -72,24 +70,15 @@ export default function CharacterBuilder({
     color,
     status,
     walkPhase = 0,
-    mood = "neutral",
 }: CharacterBuilderProps) {
     const leftLegRef = useRef<THREE.Mesh>(null);
     const rightLegRef = useRef<THREE.Mesh>(null);
-    const leftArmRef = useRef<THREE.Group>(null);
-    const rightArmRef = useRef<THREE.Group>(null);
-    const headGroupRef = useRef<THREE.Group>(null);
-    const bodyBreathRef = useRef<THREE.Group>(null);
 
     const materialColor = status === "error" ? "#ef4444" : color;
     const isWalking = status === "walking" || status === "returning";
-    const isWorking = ["working", "coding", "searching"].includes(status);
-    const isThinking = ["thinking", "planning"].includes(status);
 
     // Leg animation via walkPhase
     const legSwing = isWalking ? Math.sin(walkPhase) * 0.3 : 0;
-    // Arm swing — opposite to legs for natural walk
-    const armSwing = isWalking ? Math.sin(walkPhase + Math.PI) * 0.4 : 0;
 
     // Leg offset based on style
     const legSpread =
@@ -97,119 +86,26 @@ export default function CharacterBuilder({
         characterDef.legStyle === "guard_stance" ? 0.09 :
         0.06;
 
-    // Arm offset (slightly wider than legs)
-    const armSpread = legSpread + 0.06;
+    // Memoize head geometry based on shape/color/status
+    const headElement = useMemo(
+        () => renderHead(characterDef.headShape, characterDef.headScale, materialColor, characterDef.emissiveIntensity),
+        [characterDef.headShape, characterDef.headScale, materialColor, characterDef.emissiveIntensity]
+    );
 
-    useFrame(({ clock }) => {
-        const t = clock.elapsedTime;
-
-        // Breathing animation on body
-        if (bodyBreathRef.current) {
-            const breathScale = 1 + Math.sin(t * 1.2) * 0.008;
-            bodyBreathRef.current.scale.set(breathScale, 1, breathScale);
-        }
-
-        // Head animation based on status/mood
-        if (headGroupRef.current) {
-            if (isThinking) {
-                // Slight head tilt while thinking
-                headGroupRef.current.rotation.z = Math.sin(t * 0.8) * 0.08;
-                headGroupRef.current.rotation.x = Math.sin(t * 0.5) * 0.05;
-            } else if (isWorking) {
-                // Head nod while working (looking at screen)
-                headGroupRef.current.rotation.x = -0.1 + Math.sin(t * 2) * 0.03;
-                headGroupRef.current.rotation.z = 0;
-            } else if (mood === "happy" || mood === "celebrating") {
-                headGroupRef.current.rotation.z = Math.sin(t * 3) * 0.06;
-                headGroupRef.current.rotation.x = 0;
-            } else {
-                // Reset
-                headGroupRef.current.rotation.z *= 0.95;
-                headGroupRef.current.rotation.x *= 0.95;
-            }
-        }
-
-        // Arm animations for non-walking states
-        if (!isWalking) {
-            if (leftArmRef.current && rightArmRef.current) {
-                if (isWorking) {
-                    // Typing animation — small rapid arm movements
-                    leftArmRef.current.rotation.x = -0.8 + Math.sin(t * 8) * 0.05;
-                    rightArmRef.current.rotation.x = -0.8 + Math.sin(t * 8 + 1.5) * 0.05;
-                    leftArmRef.current.rotation.z = 0.15;
-                    rightArmRef.current.rotation.z = -0.15;
-                } else if (isThinking) {
-                    // One arm up to chin
-                    leftArmRef.current.rotation.x = 0;
-                    leftArmRef.current.rotation.z = 0;
-                    rightArmRef.current.rotation.x = -1.0 + Math.sin(t * 0.5) * 0.1;
-                    rightArmRef.current.rotation.z = -0.3;
-                } else if (mood === "celebrating") {
-                    // Arms up celebration
-                    leftArmRef.current.rotation.x = -2.5 + Math.sin(t * 4) * 0.3;
-                    rightArmRef.current.rotation.x = -2.5 + Math.sin(t * 4 + Math.PI) * 0.3;
-                    leftArmRef.current.rotation.z = 0.3;
-                    rightArmRef.current.rotation.z = -0.3;
-                } else if (mood === "stressed") {
-                    // Arms tense
-                    leftArmRef.current.rotation.x = -0.3 + Math.sin(t * 6) * 0.02;
-                    rightArmRef.current.rotation.x = -0.3 + Math.sin(t * 6) * 0.02;
-                    leftArmRef.current.rotation.z = 0.15;
-                    rightArmRef.current.rotation.z = -0.15;
-                } else {
-                    // Idle — gentle sway
-                    leftArmRef.current.rotation.x = Math.sin(t * 0.6) * 0.05;
-                    rightArmRef.current.rotation.x = Math.sin(t * 0.6 + 1) * 0.05;
-                    leftArmRef.current.rotation.z = 0;
-                    rightArmRef.current.rotation.z = 0;
-                }
-            }
-        }
-    });
+    // Memoize body geometry based on shape/color/status
+    const bodyElement = useMemo(
+        () => renderBody(characterDef.bodyShape, characterDef.bodyScale, materialColor, characterDef.emissiveIntensity),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [characterDef.bodyShape, characterDef.bodyScale[0], characterDef.bodyScale[1], characterDef.bodyScale[2], materialColor, characterDef.emissiveIntensity]
+    );
 
     return (
         <group>
-            {/* Head with animation group */}
-            <group ref={headGroupRef}>
-                {renderHead(characterDef.headShape, characterDef.headScale, materialColor, characterDef.emissiveIntensity)}
-            </group>
+            {/* Head */}
+            {headElement}
 
-            {/* Body with breathing */}
-            <group ref={bodyBreathRef}>
-                {renderBody(characterDef.bodyShape, characterDef.bodyScale, materialColor, characterDef.emissiveIntensity)}
-            </group>
-
-            {/* Arms */}
-            <group
-                ref={leftArmRef}
-                position={[-armSpread - 0.04, 0.12, 0]}
-                rotation={[isWalking ? armSwing : 0, 0, 0]}
-            >
-                {/* Upper arm */}
-                <mesh position={[0, -0.06, 0]}>
-                    <cylinderGeometry args={[0.018, 0.015, 0.14, 6]} />
-                    <meshStandardMaterial color={materialColor} roughness={0.5} />
-                </mesh>
-                {/* Forearm */}
-                <mesh position={[0, -0.14, isWorking ? -0.04 : 0]} rotation={[isWorking ? -0.5 : 0, 0, 0]}>
-                    <cylinderGeometry args={[0.015, 0.012, 0.1, 6]} />
-                    <meshStandardMaterial color={materialColor} roughness={0.5} />
-                </mesh>
-            </group>
-            <group
-                ref={rightArmRef}
-                position={[armSpread + 0.04, 0.12, 0]}
-                rotation={[isWalking ? -armSwing : 0, 0, 0]}
-            >
-                <mesh position={[0, -0.06, 0]}>
-                    <cylinderGeometry args={[0.018, 0.015, 0.14, 6]} />
-                    <meshStandardMaterial color={materialColor} roughness={0.5} />
-                </mesh>
-                <mesh position={[0, -0.14, isWorking ? -0.04 : 0]} rotation={[isWorking ? -0.5 : 0, 0, 0]}>
-                    <cylinderGeometry args={[0.015, 0.012, 0.1, 6]} />
-                    <meshStandardMaterial color={materialColor} roughness={0.5} />
-                </mesh>
-            </group>
+            {/* Body */}
+            {bodyElement}
 
             {/* Legs */}
             <mesh

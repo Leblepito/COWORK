@@ -6,48 +6,82 @@ Supports: Anthropic (Claude), Google (Gemini)
 DB calls from threads use _sync_db() to bridge async→sync via the main event loop.
 """
 import os, json, asyncio, threading
+import collections
+import time as _time
+import structlog
 from pathlib import Path
 from datetime import datetime
 from database import get_db
 from database.connection import get_event_loop
 from tools import read_file, write_file, list_dir, search_files, run_command
 from llm_providers import get_provider, TOOL_DEFS
+from exceptions import NotFoundError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from cache import app_cache
+from cost_tracking import calculate_cost
+from sse import broadcaster
+
+logger = structlog.get_logger()
 
 MAX_TOOL_ROUNDS = 10
 WORKSPACE = Path(__file__).parent / "workspace"
 
 
-def _sync_db(coro):
+def _sync_db(coro) -> object:
     """Run an async DB coroutine from a sync thread context."""
     future = asyncio.run_coroutine_threadsafe(coro, get_event_loop())
     return future.result(timeout=30)
 
 
+AGENT_TIMEOUT_SECONDS = 300  # 5 minutes
+
+
 class AgentProc:
-    __slots__ = ("agent_id", "status", "lines", "started_at", "thread", "task_text")
+    __slots__ = ("agent_id", "status", "lines", "started_at", "thread", "task_text", "_finished_at")
     def __init__(self, agent_id):
         self.agent_id = agent_id
         self.status = "idle"
-        self.lines: list[str] = []
+        self.lines: collections.deque = collections.deque(maxlen=200)
         self.started_at = ""
         self.thread: threading.Thread | None = None
         self.task_text = ""
+        self._finished_at: float | None = None
     def log(self, msg):
         ts = datetime.now().strftime('%H:%M:%S')
         self.lines.append(f"[{ts}] {msg}")
-        self.lines = self.lines[-200:]
     @property
     def alive(self):
         return self.thread is not None and self.thread.is_alive()
     def to_dict(self):
-        return {"agent_id": self.agent_id, "status": self.status, "lines": self.lines[-50:],
+        return {"agent_id": self.agent_id, "status": self.status, "lines": list(self.lines)[-50:],
                 "alive": self.alive, "pid": 0, "started_at": self.started_at}
 
 
 PROCS: dict[str, AgentProc] = {}
 
-# Global flag: set when API credit/billing error detected — stops futile retries
-CREDIT_ERROR: dict = {"active": False, "message": "", "since": ""}
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    retry=retry_if_exception_type((ConnectionError, TimeoutError, OSError)),
+    reraise=True,
+)
+def _llm_chat_with_retry(provider, sys_prompt, messages, tool_defs):
+    return provider.chat(sys_prompt, messages, tool_defs)
+
+
+def cleanup_finished_agents(ttl_seconds: int = 300) -> None:
+    """Remove finished agents from PROCS after TTL expires."""
+    now = _time.time()
+    to_remove = []
+    for aid, proc in PROCS.items():
+        if not proc.alive and proc.status in ("done", "error"):
+            finished = getattr(proc, "_finished_at", None)
+            if finished and (now - finished) > ttl_seconds:
+                to_remove.append(aid)
+    for aid in to_remove:
+        del PROCS[aid]
+        logger.info("agent_cleaned_up", agent_id=aid)
 
 
 def _read_env_value(key: str) -> str:
@@ -75,6 +109,11 @@ def _get_llm_config() -> tuple[str, str, str]:
 
 
 def _workspace_context(agent_id: str) -> str:
+    cache_key = f"workspace_ctx:{agent_id}"
+    cached = app_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     ws = WORKSPACE / agent_id
     parts = []
     for name in ["README.md", "gorevler.md"]:
@@ -90,9 +129,13 @@ def _workspace_context(agent_id: str) -> str:
                     try:
                         d = json.loads(f.read_text())
                         parts.append(f"  📋 {d.get('title','?')}: {d.get('description','')[:150]}")
-                    except: parts.append(f"  📄 {f.name}")
+                    except (json.JSONDecodeError, OSError) as e:
+                        logger.warning("workspace_file_read_error", file=str(f), error=str(e))
+                        parts.append(f"  📄 {f.name}")
                 else: parts.append(f"  📄 {f.name} ({f.stat().st_size}b)")
-    return "\n".join(parts)
+    result = "\n".join(parts)
+    app_cache.set(cache_key, result, ttl=60)
+    return result
 
 
 def _execute_tool(agent_id: str, tool_name: str, tool_input: dict) -> str:
@@ -115,15 +158,17 @@ def _execute_tool(agent_id: str, tool_name: str, tool_input: dict) -> str:
         return json.dumps({"error": str(e)})
 
 
-def _run(proc: AgentProc, task: str):
+def _run(proc: AgentProc, task: str) -> None:
     """Run agent in a thread with tool_use support. Uses _sync_db() for async DB calls."""
     db = get_db()
     agent = _sync_db(db.get_agent(proc.agent_id))
     if not agent:
-        proc.status = "error"; proc.log("Agent not found"); return
+        proc.status = "error"
+        proc._finished_at = _time.time()
+        proc.log("Agent not found")
+        return
 
     proc.status = "thinking"
-    _sync_db(db.update_agent_mood(proc.agent_id, "focused", 90))
 
     provider_name, api_key, model = _get_llm_config()
     provider_label = "Gemini" if provider_name == "gemini" else "Claude"
@@ -132,6 +177,7 @@ def _run(proc: AgentProc, task: str):
     if not api_key:
         key_name = "GEMINI_API_KEY" if provider_name == "gemini" else "ANTHROPIC_API_KEY"
         proc.status = "error"
+        proc._finished_at = _time.time()
         proc.log(f"{key_name} bulunamadi!")
         proc.log("Dashboard'dan API Key girin veya .env dosyasina ekleyin")
         return
@@ -160,7 +206,40 @@ Isini bitirdiginde sonucu ozetle."""
             if proc.status == "done":
                 break  # killed externally
 
-            text, tool_calls = provider.chat(sys_prompt, messages, TOOL_DEFS)
+            text, tool_calls = _llm_chat_with_retry(provider, sys_prompt, messages, TOOL_DEFS)
+
+            # Record cost after each LLM call
+            try:
+                usage = provider.get_last_usage() if hasattr(provider, "get_last_usage") else {}
+                in_tok = int(usage.get("input_tokens", 0) or 0)
+                out_tok = int(usage.get("output_tokens", 0) or 0)
+                if in_tok > 0 or out_tok > 0:
+                    model_name = os.environ.get("LLM_MODEL",
+                        os.environ.get("ANTHROPIC_MODEL",
+                        os.environ.get("GEMINI_MODEL", "claude-sonnet-4-20250514")))
+                    cost = calculate_cost(model_name, in_tok, out_tok)
+                    _sync_db(db.record_llm_usage(
+                        agent_id=proc.agent_id,
+                        provider=os.environ.get("LLM_PROVIDER", "anthropic"),
+                        model=model_name,
+                        input_tokens=in_tok,
+                        output_tokens=out_tok,
+                        cost_usd=cost,
+                    ))
+            except Exception as e:
+                logger.warning("cost_tracking_failed", error=str(e))
+
+            # Budget check after cost recording
+            try:
+                from cost_tracking import get_budget_status
+                daily = _sync_db(db.get_daily_spend())
+                budget = get_budget_status(daily)
+                if budget["warning"]:
+                    asyncio.run_coroutine_threadsafe(
+                        broadcaster.broadcast("budget_warning", budget), get_event_loop()
+                    )
+            except Exception as e:
+                logger.warning("budget_check_failed", error=str(e))
 
             if text:
                 collected_text += text
@@ -196,33 +275,18 @@ Isini bitirdiginde sonucu ozetle."""
         proc.log("Cikti kaydediliyor...")
         _save_output(proc.agent_id, task, collected_text, proc)
         proc.status = "done"
+        proc._finished_at = _time.time()
         proc.log("Gorev tamamlandi!")
-        _sync_db(db.update_agent_mood(proc.agent_id, "happy", 70))
-        _sync_db(db.add_animation_event(proc.agent_id, "celebrate", {"reason": "task_complete"}))
         _sync_db(db.add_event(proc.agent_id, f"Gorev tamamlandi: {task[:50]}", "info"))
     except Exception as e:
-        err_str = str(e)
         proc.status = "error"
-        proc.log(f"Hata: {err_str}")
-
-        # Detect credit/billing errors — set global flag to stop futile retries
-        billing_keywords = ["credit balance", "billing", "insufficient_quota", "exceeded your current quota"]
-        if any(kw in err_str.lower() for kw in billing_keywords):
-            CREDIT_ERROR["active"] = True
-            CREDIT_ERROR["message"] = err_str[:200]
-            CREDIT_ERROR["since"] = datetime.now().isoformat()
-            proc.log("⚠ API kredi hatasi tespit edildi — otonom spawn duraklatildi")
-            _sync_db(db.add_event(proc.agent_id,
-                "⚠ API kredi yetersiz! Lutfen Plans & Billing'den kredi yukleyin. Otonom spawn duraklatildi.",
-                "warning"))
-        else:
-            _sync_db(db.add_event(proc.agent_id, f"Hata: {err_str}", "warning"))
-
-        _sync_db(db.update_agent_mood(proc.agent_id, "stressed", 30))
-        _sync_db(db.add_animation_event(proc.agent_id, "alert", {"reason": "error", "error": err_str[:100]}))
+        proc._finished_at = _time.time()
+        proc.log(f"❌ Error: {type(e).__name__}: {e}")
+        logger.error("agent_run_error", agent_id=proc.agent_id, error=str(e), error_type=type(e).__name__)
+        _sync_db(db.add_event(proc.agent_id, f"Hata: {e}", "warning"))
 
 
-def _save_output(agent_id: str, task: str, response: str, proc: AgentProc):
+def _save_output(agent_id: str, task: str, response: str, proc: AgentProc) -> None:
     ws = WORKSPACE / agent_id / "output"
     ws.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -237,23 +301,21 @@ def _save_output(agent_id: str, task: str, response: str, proc: AgentProc):
             (ws / f"result_{ts}.json").write_text(json.dumps(result, indent=2, ensure_ascii=False))
             proc.log(f"  💾 result_{ts}.json")
         else: raise ValueError
-    except:
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        logger.warning("output_parse_fallback", agent_id=agent_id, error=str(e))
         (ws / f"response_{ts}.md").write_text(f"# {task}\n\n{response}")
         proc.log(f"  💾 response_{ts}.md")
 
 
 # ── Public API ──
 
-async def spawn_agent(agent_id: str, task: str = "", force: bool = False) -> dict:
+async def spawn_agent(agent_id: str, task: str = "") -> dict:
     db = get_db()
     agent = await db.get_agent(agent_id)
-    if not agent: return {"error": f"Unknown agent: {agent_id}"}
+    if not agent:
+        raise NotFoundError("agent", agent_id)
     if agent_id in PROCS and PROCS[agent_id].alive:
         return {"error": "Already running", **PROCS[agent_id].to_dict()}
-
-    # Block spawn if credit error is active (unless manually forced from UI)
-    if CREDIT_ERROR["active"] and not force:
-        return {"error": "API kredi yetersiz — spawn duraklatildi. Dashboard'dan kredi yukleyin."}
 
     if not task:
         inbox = WORKSPACE / agent_id / "inbox"
@@ -263,7 +325,8 @@ async def spawn_agent(agent_id: str, task: str = "", force: bool = False) -> dic
                     d = json.loads(f.read_text())
                     task = f"{d['title']}: {d.get('description', '')}"
                     break
-                except: pass
+                except (json.JSONDecodeError, KeyError, OSError) as e:
+                    logger.warning("inbox_task_parse_error", file=str(f), error=str(e))
     if not task:
         task = f"{agent['desc']} — Genel durum kontrolü, inbox tara, rapor üret."
 
@@ -277,6 +340,16 @@ async def spawn_agent(agent_id: str, task: str = "", force: bool = False) -> dic
     proc.thread = t
     PROCS[agent_id] = proc
     t.start()
+
+    async def _timeout_kill():
+        await asyncio.sleep(AGENT_TIMEOUT_SECONDS)
+        if proc.alive:
+            proc.status = "error"
+            proc.log(f"⏰ Timeout after {AGENT_TIMEOUT_SECONDS}s")
+            proc._finished_at = _time.time()
+            logger.warning("agent_timeout", agent_id=agent_id, timeout=AGENT_TIMEOUT_SECONDS)
+
+    asyncio.create_task(_timeout_kill())
     return proc.to_dict()
 
 
