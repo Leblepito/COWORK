@@ -13,6 +13,86 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_COWORK_API_URL || "";
 
+// ─── Agent Görev Örnekleri ────────────────────────────────────────────────────
+
+const AGENT_TASK_EXAMPLES: Record<string, { placeholder: string; suggestions: string[] }> = {
+  "school-game": {
+    placeholder: "Elliott Wave egitim gorevi ver...",
+    suggestions: ["Elliott Wave dalga sayimi egitim modulu olustur", "SMC Break of Structure quiz hazirla", "Baslangic seviyesi trading egitim plani yaz"],
+  },
+  "indicator": {
+    placeholder: "Teknik analiz gorevi ver...",
+    suggestions: ["BTC/USDT Elliott Wave analizi yap ve sinyal uret", "SOL/USDT icin SMC yapisal analiz (BOS, CHoCH, OB)", "Funding rate anomali taramasi yap"],
+  },
+  "algo-bot": {
+    placeholder: "Algoritmik trading gorevi ver...",
+    suggestions: ["RSI + MACD crossover stratejisi kodla ve backtest et", "Grid trading botu tasarla (BTC 60K-80K arasi)", "Son 6 aylik backtest raporu olustur"],
+  },
+  "clinic": {
+    placeholder: "Klinik yonetim gorevi ver...",
+    suggestions: ["Bu haftanin oda doluluk raporunu hazirla", "Yeni hasta kabul proseduru olustur", "Doktor nobetci cizelgesini optimize et"],
+  },
+  "health-tourism": {
+    placeholder: "Saglik turizmi gorevi ver...",
+    suggestions: ["Phuket'ten Turkiye'ye sac ekimi paketi hazirla", "Istanbul hastaneleri fiyat karsilastirmasi yap", "Hasta transfer ve konaklama plani olustur"],
+  },
+  "manufacturing": {
+    placeholder: "Uretim/yatirim gorevi ver...",
+    suggestions: ["Tayland BOI tesvik programi analizi yap", "Kaucuk eldiven fabrikasi fizibilite raporu hazirla", "ISO 13485 sertifikasyon sureci plani olustur"],
+  },
+  "hotel": {
+    placeholder: "Otel yonetim gorevi ver...",
+    suggestions: ["Onumuzdeki ay icin dinamik fiyatlandirma stratejisi olustur", "OTA kanal yonetimi raporu hazirla", "VIP misafir protokolu belgesi yaz"],
+  },
+  "flight": {
+    placeholder: "Ucak bileti gorevi ver...",
+    suggestions: ["Istanbul-Phuket en uygun ucus seceneklerini ara", "Grup rezervasyonu (10 kisi) icin fiyat teklifi hazirla", "Sezonluk ucus fiyat analizi yap"],
+  },
+  "rental": {
+    placeholder: "Arac kiralama gorevi ver...",
+    suggestions: ["Phuket filo durumu ve musaitlik raporu hazirla", "Yaz sezonu fiyatlandirma stratejisi olustur", "Arac bakim cizelgesi ve maliyet analizi yap"],
+  },
+  "fullstack": {
+    placeholder: "Yazilim gelistirme gorevi ver...",
+    suggestions: ["Login sayfasindaki formu responsive yap", "REST API icin rate limiting middleware ekle", "PostgreSQL sorgu performansini optimize et"],
+  },
+  "app-builder": {
+    placeholder: "Mobil/masaustu uygulama gorevi ver...",
+    suggestions: ["React Native ile push notification sistemi kur", "Electron masaustu uygulamasi icin auto-update ekle", "Cross-platform UI kit tasarla"],
+  },
+  "prompt-engineer": {
+    placeholder: "Agent egitim gorevi ver...",
+    suggestions: ["Indicator agentinin system prompt'unu optimize et", "Yeni agent icin skill.md ve rolls.md olustur", "Tum agentlarin performans karsilastirma raporu hazirla"],
+  },
+  "social-media-manager": {
+    placeholder: "Sosyal medya gorevi ver...",
+    suggestions: ["Bu hafta icin 5 adet kripto tweet plani olustur", "Instagram icin COWORK.ARMY tanitim icerigi hazirla", "X (Twitter) trend analizi ve hashtag stratejisi yap"],
+  },
+  "u2algo-manager": {
+    placeholder: "Platform yonetim gorevi ver...",
+    suggestions: ["u2algo.com SEO analizi ve iyilestirme raporu yaz", "Kullanici geri bildirimlerini analiz et", "Yeni landing page icerigi olustur"],
+  },
+  "data-pipeline": {
+    placeholder: "Veri toplama gorevi ver...",
+    suggestions: ["Kripto borsalarindan OHLCV verisi toplayan pipeline kur", "Haber sitelerinden otomatik icerik scraping yap", "API entegrasyonu ile piyasa verisi akisi olustur"],
+  },
+  "cargo": {
+    placeholder: "Dosya analiz ve yonlendirme gorevi ver...",
+    suggestions: ["Yuklenen CSV dosyasini analiz edip ilgili departmana yonlendir", "Proje dokumanini incele ve gorev dagilimi yap", "Gelen veriyi siniflandir ve raporla"],
+  },
+  "ceo": {
+    placeholder: "Stratejik yonetim gorevi ver...",
+    suggestions: ["Tum departmanlarin performans analizini yap", "Onumuzdeki hafta icin stratejik plan olustur", "Sistem verimliligi raporu hazirla ve iyilestirme oner"],
+  },
+};
+
+function getTaskExamples(agentId: string) {
+  return AGENT_TASK_EXAMPLES[agentId] || {
+    placeholder: "Gorevi acikla...",
+    suggestions: ["Durumu raporla", "Analiz yap ve sonuclari paylas", "Iyilestirme onerileri sun"],
+  };
+}
+
 // ─── Tipler ───────────────────────────────────────────────────────────────────
 
 interface AgentDetail {
@@ -495,12 +575,31 @@ function TaskTab({ color, isActive, taskText, setTaskText, taskSending, taskResu
       {/* Yeni görev */}
       <div>
         <SectionLabel>YENİ GÖREV VER</SectionLabel>
+
+        {/* Öneri butonları */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6, marginBottom: 6 }}>
+          {getTaskExamples(agent.id).suggestions.map((s, i) => (
+            <button key={i} onClick={() => setTaskText(s)}
+              style={{
+                background: `${color}10`, border: `1px solid ${color}20`,
+                borderRadius: 4, padding: "4px 8px", fontSize: 9,
+                fontFamily: "monospace", color: `${color}cc`, cursor: "pointer",
+                transition: "all 0.15s", lineHeight: 1.3,
+              }}
+              onMouseEnter={e => { (e.target as HTMLElement).style.background = `${color}25`; (e.target as HTMLElement).style.borderColor = `${color}50`; }}
+              onMouseLeave={e => { (e.target as HTMLElement).style.background = `${color}10`; (e.target as HTMLElement).style.borderColor = `${color}20`; }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+
         <textarea
           value={taskText}
           onChange={e => setTaskText(e.target.value)}
-          placeholder="Görevi açıkla... (örn: BTC/USDT için Elliott Wave analizi yap ve sinyal üret)"
+          placeholder={getTaskExamples(agent.id).placeholder}
           style={{
-            width: "100%", marginTop: 6, minHeight: 90,
+            width: "100%", minHeight: 90,
             background: "#060a14", border: `1px solid ${color}25`,
             borderRadius: 6, padding: "8px 10px",
             color: "#ccc", fontSize: 11, fontFamily: "monospace",
