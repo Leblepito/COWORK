@@ -264,3 +264,23 @@ class TaskHistory(Base):
         Index("ix_task_history_task", "task_id"),
         Index("ix_task_history_ts", "changed_at"),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USER AUTH — Login/Register system
+# ─────────────────────────────────────────────────────────────────────────────
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    company: Mapped[str] = mapped_column(String(255), nullable=True, default="")
+    avatar: Mapped[str] = mapped_column(String(512), nullable=True, default="")
+    plan: Mapped[str] = mapped_column(String(50), default="free")
+    max_agents: Mapped[int] = mapped_column(Integer, default=5)
+    role: Mapped[str] = mapped_column(String(20), default="member")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=_utcnow)
