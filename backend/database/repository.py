@@ -460,6 +460,17 @@ class Database:
                 "created_at": user.created_at.isoformat() if user.created_at else "",
             }
 
+    async def update_user_plan(self, user_id: int, plan: str, company: str | None = None) -> None:
+        """Update user plan (e.g., 'free' -> 'starter' after onboarding)."""
+        async with self._sf() as s:
+            result = await s.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user:
+                user.plan = plan
+                if company:
+                    user.company = company
+                await s.commit()
+
     async def get_user_by_id(self, user_id: int) -> dict | None:
         async with self._sf() as s:
             result = await s.execute(select(User).where(User.id == user_id))
