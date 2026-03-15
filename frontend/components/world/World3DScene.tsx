@@ -14,7 +14,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF, OrbitControls, Billboard, Text, Sparkles, Line } from "@react-three/drei";
 import * as THREE from "three";
 import type { WorldEvent, AgentWorldModel } from "@/lib/world-types";
-import { getAgentProfile, ANIMATION_DESCRIPTIONS } from "@/lib/agent-profiles";
+import { getAgentProfile, getModelPath, checkModelAvailability, ANIMATION_DESCRIPTIONS } from "@/lib/agent-profiles";
 import AgentCommandPanel from "./AgentCommandPanel";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
@@ -317,7 +317,17 @@ function AgentMascot3D({ agentId, dept, index, isWorking, taskText, isSelected, 
   waitSlot: number; // CEO etrafında bekleme slotu
 }) {
   const profile = useMemo(() => getAgentProfile(agentId), [agentId]);
-  const { scene } = useGLTF(profile.glbModel);
+  const [modelReady, setModelReady] = useState(false);
+  const modelPath = useMemo(() => {
+    // Try individual model first, fallback to department model
+    return modelReady ? profile.glbModel : getModelPath(agentId, profile.dept);
+  }, [agentId, profile, modelReady]);
+
+  useEffect(() => {
+    checkModelAvailability(agentId).then(ok => setModelReady(ok));
+  }, [agentId]);
+
+  const { scene } = useGLTF(modelPath);
   const cloned = useMemo(() => {
     const c = scene.clone(true);
     c.traverse(child => {
